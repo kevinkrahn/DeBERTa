@@ -1,10 +1,10 @@
 nltk
-spacy
+#spacy
 numpy
 pytest
 regex
 scipy
-sklearn
+scikit-learn
 tqdm
 ujson
 seqeval
@@ -13,3 +13,5 @@ sentencepiece
 #GitPython
 torch
 #torchvision
+six
+requests

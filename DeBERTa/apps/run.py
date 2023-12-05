@@ -32,18 +32,18 @@ from ._utils import merge_distributed, join_chunks
 
 import pdb
 
-from ..training import DistributedTrainer, initialize_distributed, batch_to, set_random_seed,kill_children
+from ..training import DistributedTrainer, initialize_distributed, batch_to, kill_children
 from ..data import DistributedBatchSampler, SequentialSampler, BatchSampler, AsyncDataLoader
 from ..training import get_args as get_training_args
 from ..optims import get_args as get_optims_args
 
-def create_model(args, num_labels, model_class_fn):
+def create_model(args, num_labels, model_class_fn, tokenizer):
   # Prepare model
   rank = getattr(args, 'rank', 0)
   init_model = args.init_model if rank<1 else None
   model = model_class_fn(init_model, args.model_config, num_labels=num_labels, \
       drop_out=args.cls_drop_out, \
-      pre_trained = args.pre_trained)
+      pre_trained=args.pre_trained, tokenizer=tokenizer)
   if args.fp16:
     model = model.half()
 
@@ -292,8 +292,9 @@ def main(args):
 
   if args.do_train:
     train_data = task.train_data(max_seq_len=args.max_seq_length, debug=args.debug)
+
   model_class_fn = task.get_model_class_fn()
-  model = create_model(args, len(label_list), model_class_fn)
+  model = create_model(args, len(label_list), model_class_fn, tokenizer)
   if args.do_train:
     with open(os.path.join(args.output_dir, 'model_config.json'), 'w', encoding='utf-8') as fs:
       fs.write(model.config.to_json_string() + '\n')

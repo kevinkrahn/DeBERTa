@@ -1,51 +1,41 @@
-#
-# Author: penhe@microsoft.com
-# Date: 01/25/2019
-#
-
-from glob import glob
 from collections import OrderedDict,defaultdict
-from bisect import bisect
 import copy
-import math
-from scipy.special import softmax
 import numpy as np
-import pdb
 import os
-import sys
-import csv
 
 import random
 import torch
-import re
 import shutil
-import ujson as json
 from torch.utils.data import DataLoader
 from .metrics import *
 from .task import EvalData, Task
 from .task_registry import register_task
 from ...utils import xtqdm as tqdm
-from ...data import ExampleInstance, ExampleSet, DynamicDataset,example_to_feature
-from ...data.example import _truncate_segments
-from ...data.example import *
+from ...data import DynamicDataset
 from ...deberta import NNModule
 from ...utils import get_logger,boolean_string
 from ...training import DistributedTrainer, batch_to
 from ...data import DistributedBatchSampler, SequentialSampler, BatchSampler, AsyncDataLoader
 from ..models import MaskedLanguageModel,ReplacedTokenDetectionModel
-from .mlm_task import NGramMaskGenerator
-from .._utils import merge_distributed, join_chunks
+from .char_mlm_task import NGramMaskGenerator
+from .._utils import merge_distributed
 
-logger=get_logger()
+logger = get_logger()
 
-__all__ = ["RTDTask"]
+__all__ = ["Char_RTDTask"]
 
 class RTDModel(NNModule):
-  def __init__(self, config, *wargs, **kwargs):
+  def __init__(self, config, tokenizer=None, *wargs, **kwargs):
     super().__init__(config)
     gen_config = config.generator
     disc_config = config.discriminator
     self.config = config
+
+    if tokenizer and gen_config.vocab_size != len(tokenizer.vocab):
+      gen_config.vocab_size = len(tokenizer.vocab)
+    if tokenizer and disc_config.vocab_size != len(tokenizer.vocab):
+      disc_config.vocab_size = len(tokenizer.vocab)
+
     self.generator = MaskedLanguageModel(gen_config)
     self.discriminator = ReplacedTokenDetectionModel(disc_config)
 
@@ -66,7 +56,6 @@ class RTDModel(NNModule):
 
   def _pre_load_hook(self, state_dict, prefix, local_metadata, strict,
       missing_keys, unexpected_keys, error_msgs):
-    new_state = dict()
     bert_prefix = prefix + 'bert.'
     deberta_prefix = prefix + 'deberta.'
     for k in list(state_dict.keys()):
@@ -137,53 +126,46 @@ class RTDModel(NNModule):
       delattr(module, param_name)
     module.register_buffer(param_name, value)
 
-@register_task(name="RTD", desc="Replaced token detection pretraining task")
-class RTDTask(Task):
+@register_task(name="Char_RTD", desc="Replaced token detection pretraining task")
+class Char_RTDTask(Task):
   def __init__(self, data_dir, tokenizer, args, **kwargs):
     super().__init__(tokenizer, args, **kwargs)
     self.data_dir = data_dir
-    self.mask_gen = NGramMaskGenerator(tokenizer, max_gram=1, keep_prob = 0, mask_prob = 1, max_seq_len = args.max_seq_length)
+    self.mask_gen = NGramMaskGenerator(tokenizer, max_gram=1, keep_prob=0, mask_prob=1, max_seq_len=args.max_seq_length)
 
   def train_data(self, max_seq_len=512, **kwargs):
-    data = self.load_data(os.path.join(self.data_dir, 'train.txt'))
-    examples = ExampleSet(data)
-    if self.args.num_training_steps is None:
-      dataset_size = len(examples)
-    else:
-      dataset_size = self.args.num_training_steps*self.args.train_batch_size
-    return DynamicDataset(examples, feature_fn = self.get_feature_fn(max_seq_len=max_seq_len, mask_gen=self.mask_gen), \
-dataset_size = dataset_size, shuffle=True, **kwargs)
+    examples = self.load_data(os.path.join(self.data_dir, 'train.txt'))
+    dataset_size = len(examples) if self.args.num_training_steps is None else self.args.num_training_steps*self.args.train_batch_size
+    return DynamicDataset(examples, feature_fn=self.get_feature_fn(max_seq_len=max_seq_len, mask_gen=self.mask_gen), \
+dataset_size=dataset_size, shuffle=True, **kwargs)
 
   def get_labels(self):
     return list(self.tokenizer.vocab.values())
 
   def eval_data(self, max_seq_len=512, **kwargs):
-    ds = [
-        self._data('dev', 'valid.txt', 'dev'),
-        ]
+    ds = [self._data('dev', 'valid.txt', 'dev')]
    
     for d in ds:
       _size = len(d.data)
-      d.data = DynamicDataset(d.data, feature_fn = self.get_feature_fn(max_seq_len=max_seq_len, mask_gen=self.mask_gen), dataset_size = _size, **kwargs)
+      d.data = DynamicDataset(d.data, feature_fn=self.get_feature_fn(max_seq_len=max_seq_len, mask_gen=self.mask_gen), dataset_size = _size, **kwargs)
     return ds
 
   def test_data(self, max_seq_len=512, **kwargs):
     """See base class."""
     raise NotImplemented('This method is not implemented yet.')
 
-  def _data(self, name, path, type_name = 'dev', ignore_metric=False):
+  def _data(self, name, path, type_name='dev', ignore_metric=False):
     if isinstance(path, str):
       path = [path]
-    data = []
+    examples = []
     for p in path:
       input_src = os.path.join(self.data_dir, p)
       assert os.path.exists(input_src), f"{input_src} doesn't exists"
-      data.extend(self.load_data(input_src))
+      examples.extend(self.load_data(input_src))
 
     predict_fn = self.get_predict_fn()
-    examples = ExampleSet(data)
     return EvalData(name, examples,
-      metrics_fn = self.get_metrics_fn(), predict_fn = predict_fn, ignore_metric=ignore_metric, critial_metrics=['accuracy'])
+      metrics_fn=self.get_metrics_fn(), predict_fn=predict_fn, ignore_metric=ignore_metric, critial_metrics=['accuracy'])
 
   def get_metrics_fn(self):
     """Calcuate metrics based on prediction results"""
@@ -196,11 +178,9 @@ dataset_size = dataset_size, shuffle=True, **kwargs)
 
   def load_data(self, path):
     examples = []
-    with open(path, encoding='utf-8') as fs:
-      for l in fs:
-        if len(l) > 1:
-          example = ExampleInstance(segments=[l])
-          examples.append(example)
+    with open(path, encoding='utf-8') as f:
+      for line in f:
+        examples.append([int(id) for id in line.strip().split()])
     return examples
 
   def get_feature_fn(self, max_seq_len = 512, mask_gen = None):
@@ -212,19 +192,13 @@ dataset_size = dataset_size, shuffle=True, **kwargs)
   def example_to_feature(self, tokenizer, example, max_seq_len=512, rng=None, mask_generator = None, ext_params=None, **kwargs):
     if not rng:
       rng = random
-    max_num_tokens = max_seq_len - 2
+    assert(len(example) < max_seq_len-2)
 
-    segments = [ example.segments[0].strip().split() ]
-    segments = _truncate_segments(segments, max_num_tokens, rng)
-    _tokens = ['[CLS]'] + segments[0] + ['[SEP]']
+    _tokens = [tokenizer.cls_id, *example, tokenizer.sep_id]
     if mask_generator:
-      tokens, lm_labels = mask_generator.mask_tokens(_tokens, rng)
-    token_ids = tokenizer.convert_tokens_to_ids(tokens)
+      token_ids, lm_labels = mask_generator.mask_tokens(_tokens, rng)
 
-    features = OrderedDict(input_ids = token_ids,
-      position_ids = list(range(len(token_ids))),
-      input_mask = [1]*len(token_ids),
-      labels = lm_labels)
+    features = OrderedDict(input_ids=token_ids, position_ids=list(range(len(token_ids))), input_mask=[1]*len(token_ids), labels=lm_labels)
     
     for f in features:
       features[f] = torch.tensor(features[f] + [0]*(max_seq_len - len(token_ids)), dtype=torch.int)
@@ -333,8 +307,6 @@ dataset_size = dataset_size, shuffle=True, **kwargs)
       return 0
   
     def d_loss_fn(trainer, model, data):
-      train_losses = OrderedDict()
-      with_mlm_loss = True
       disc = model(**data)
       rtd_loss = disc['loss']
       loss = args.rtd_lambda*rtd_loss.mean()

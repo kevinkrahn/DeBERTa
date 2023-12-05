@@ -9,14 +9,11 @@
 
 import copy
 import torch
-import os
 
-import json
 from .ops import *
 from .bert import *
 from .config import ModelConfig
 from .cache_utils import load_model_state
-import pdb
 
 __all__ = ['DeBERTa']
 
@@ -56,7 +53,7 @@ class DeBERTa(torch.nn.Module):
     self.pre_trained = pre_trained
     self.apply_state(state)
 
-  def forward(self, input_ids, attention_mask=None, token_type_ids=None, output_all_encoded_layers=True, position_ids = None, return_att = False):
+  def forward(self, input_ids, attention_mask=None, token_type_ids=None, output_all_encoded_layers=True, position_ids=None, return_att=False):
     """
     Args:
       input_ids:

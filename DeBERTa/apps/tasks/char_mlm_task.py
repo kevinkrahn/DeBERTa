@@ -1,48 +1,29 @@
-#
-# Author: penhe@microsoft.com
-# Date: 01/25/2019
-#
-
-from glob import glob
-from collections import OrderedDict,defaultdict
+from collections import OrderedDict
 from bisect import bisect
-import copy
 import math
-from scipy.special import softmax
 import numpy as np
-import pdb
 import os
-import sys
-import csv
 
 import random
 import torch
-import re
-import ujson as json
 from torch.utils.data import DataLoader
 from .metrics import *
 from .task import EvalData, Task
 from .task_registry import register_task
 from ...utils import xtqdm as tqdm
-from ...training import DistributedTrainer, batch_to
+from ...training import batch_to
 from ...data import DistributedBatchSampler, SequentialSampler, BatchSampler, AsyncDataLoader
-from ...data import ExampleInstance, ExampleSet, DynamicDataset,example_to_feature
-from ...data.example import _truncate_segments
-from ...data.example import *
+from ...data import DynamicDataset
 from ...utils import get_logger
 from ..models import MaskedLanguageModel
-from .._utils import merge_distributed, join_chunks
+from .._utils import merge_distributed
 
 logger=get_logger()
 
-__all__ = ["MLMTask"]
+__all__ = ["Char_MLMTask"]
 
 class NGramMaskGenerator:
-  """
-  Mask ngram tokens
-  https://github.com/zihangdai/xlnet/blob/0b642d14dd8aec7f1e1ecbf7d6942d5faa6be1f0/data_utils.py
-  """
-  def __init__(self, tokenizer, mask_lm_prob=0.15, max_seq_len=512, max_preds_per_seq=None, max_gram = 1, keep_prob = 0.1, mask_prob=0.8, **kwargs):
+  def __init__(self, tokenizer, mask_lm_prob=0.15, max_seq_len=512, max_preds_per_seq=None, max_gram=1, keep_prob=0.1, mask_prob=0.8, **kwargs):
     self.tokenizer = tokenizer
     self.mask_lm_prob = mask_lm_prob
     self.keep_prob = keep_prob
@@ -50,28 +31,32 @@ class NGramMaskGenerator:
     assert self.mask_prob+self.keep_prob<=1, f'The prob of using [MASK]({mask_prob}) and the prob of using original token({keep_prob}) should between [0,1]'
     self.max_preds_per_seq = max_preds_per_seq
     if max_preds_per_seq is None:
-      self.max_preds_per_seq = math.ceil(max_seq_len*mask_lm_prob /10)*10
+      self.max_preds_per_seq = math.ceil(max_seq_len*mask_lm_prob/10)*10
 
     self.max_gram = max(max_gram, 1)
     self.mask_window = int(1/mask_lm_prob) # make ngrams per window sized context
-    self.vocab_words = list(tokenizer.vocab.keys())
+    self.vocab_words = list(set(tokenizer.vocab.values()).difference(tokenizer.special_tokens))
 
   def mask_tokens(self, tokens, rng, **kwargs):
-    special_tokens = ['[MASK]', '[CLS]', '[SEP]', '[PAD]', '[UNK]'] # + self.tokenizer.tokenize(' ')
-    indices = [i for i in range(len(tokens)) if tokens[i] not in special_tokens]
     ngrams = np.arange(1, self.max_gram + 1, dtype=np.int64)
     pvals = 1. / np.arange(1, self.max_gram + 1)
     pvals /= pvals.sum(keepdims=True)
 
+    # Each word is prefixed by a [WORD_CLS] token
     unigrams = []
-    for id in indices:
-      if self.max_gram>1 and len(unigrams)>=1 and self.tokenizer.part_of_whole_word(tokens[id]):
-        unigrams[-1].append(id)
+    last_word = None
+    for i in range(len(tokens)):
+      token_id = tokens[i]
+      if token_id == self.tokenizer.word_cls_id or token_id == self.tokenizer.sep_id:
+        if last_word is not None:
+          unigrams.append(last_word)
+        last_word = []
+      elif token_id in self.tokenizer.special_token_indices:
+        continue
       else:
-        unigrams.append([id])
-    
+        last_word.append(i)
+
     num_to_predict = min(self.max_preds_per_seq, max(1, int(round(len(tokens) * self.mask_lm_prob))))
-    mask_len = 0
     offset = 0
     mask_grams = np.array([False]*len(unigrams))
     while offset < len(unigrams):
@@ -85,6 +70,7 @@ class NGramMaskGenerator:
 
     target_labels = [None]*len(tokens)
     w_cnt = 0
+    # Mask the chars in the chosen words
     for m,word in zip(mask_grams, unigrams):
       if m:
         for idx in word:
@@ -94,7 +80,7 @@ class NGramMaskGenerator:
         if w_cnt >= num_to_predict:
           break
 
-    target_labels = [self.tokenizer.vocab[x] if x else 0 for x in target_labels]
+    target_labels = [token_id if token_id else 0 for token_id in target_labels]
     return tokens, target_labels
 
   def _choice(self, rng, data, p):
@@ -105,10 +91,9 @@ class NGramMaskGenerator:
 
   def _mask_token(self, idx, tokens, rng, mask_prob, keep_prob):
     label = tokens[idx]
-    mask = '[MASK]'
     rand = rng.random()
     if rand < mask_prob:
-      new_label = mask
+      new_label = self.tokenizer.mask_id
     elif rand < mask_prob+keep_prob:
       new_label = label
     else:
@@ -118,53 +103,45 @@ class NGramMaskGenerator:
 
     return label
 
-@register_task(name="MLM", desc="Masked language model pretraining task")
-class MLMTask(Task):
+@register_task(name="Char_MLM", desc="Masked language model pretraining task")
+class Char_MLMTask(Task):
   def __init__(self, data_dir, tokenizer, args, **kwargs):
     super().__init__(tokenizer, args, **kwargs)
     self.data_dir = data_dir
     self.mask_gen = NGramMaskGenerator(tokenizer, max_gram=self.args.max_ngram)
 
   def train_data(self, max_seq_len=512, **kwargs):
-    data = self.load_data(os.path.join(self.data_dir, 'train.txt'))
-    examples = ExampleSet(data)
-    if self.args.num_training_steps is None:
-      dataset_size = len(examples)
-    else:
-      dataset_size = self.args.num_training_steps*self.args.train_batch_size
-    return DynamicDataset(examples, feature_fn = self.get_feature_fn(max_seq_len=max_seq_len, mask_gen=self.mask_gen), \
+    examples = self.load_data(os.path.join(self.data_dir, 'train.txt'))
+    dataset_size = len(examples) if self.args.num_training_steps is None else self.args.num_training_steps*self.args.train_batch_size
+    return DynamicDataset(examples, feature_fn=self.get_feature_fn(max_seq_len=max_seq_len, mask_gen=self.mask_gen), \
 dataset_size = dataset_size, shuffle=True, **kwargs)
 
   def get_labels(self):
     return list(self.tokenizer.vocab.values())
 
   def eval_data(self, max_seq_len=512, **kwargs):
-    ds = [
-        self._data('dev', 'valid.txt', 'dev'),
-        ]
-   
+    ds = [ self._data('dev', 'valid.txt', 'dev') ]
     for d in ds:
       _size = len(d.data)
-      d.data = DynamicDataset(d.data, feature_fn = self.get_feature_fn(max_seq_len=max_seq_len, mask_gen=self.mask_gen), dataset_size = _size, **kwargs)
+      d.data = DynamicDataset(d.data, feature_fn=self.get_feature_fn(max_seq_len=max_seq_len, mask_gen=self.mask_gen), dataset_size = _size, **kwargs)
     return ds
 
   def test_data(self, max_seq_len=512, **kwargs):
     """See base class."""
     raise NotImplemented('This method is not implemented yet.')
 
-  def _data(self, name, path, type_name = 'dev', ignore_metric=False):
+  def _data(self, name, path, type_name='dev', ignore_metric=False):
     if isinstance(path, str):
       path = [path]
-    data = []
+    examples = []
     for p in path:
       input_src = os.path.join(self.data_dir, p)
       assert os.path.exists(input_src), f"{input_src} doesn't exists"
-      data.extend(self.load_data(input_src))
+      examples.extend(self.load_data(input_src))
 
     predict_fn = self.get_predict_fn()
-    examples = ExampleSet(data)
     return EvalData(name, examples,
-      metrics_fn = self.get_metrics_fn(), predict_fn = predict_fn, ignore_metric=ignore_metric, critial_metrics=['accuracy'])
+      metrics_fn=self.get_metrics_fn(), predict_fn=predict_fn, ignore_metric=ignore_metric, critial_metrics=['accuracy'])
 
   def get_metrics_fn(self):
     """Calcuate metrics based on prediction results"""
@@ -177,11 +154,9 @@ dataset_size = dataset_size, shuffle=True, **kwargs)
 
   def load_data(self, path):
     examples = []
-    with open(path, encoding='utf-8') as fs:
-      for l in fs:
-        if len(l) > 1:
-          example = ExampleInstance(segments=[l])
-          examples.append(example)
+    with open(path, encoding='utf-8') as f:
+      for line in f:
+        examples.append([int(id) for id in line.strip().split()])
     return examples
 
   def get_feature_fn(self, max_seq_len = 512, mask_gen = None):
@@ -193,19 +168,12 @@ dataset_size = dataset_size, shuffle=True, **kwargs)
   def example_to_feature(self, tokenizer, example, max_seq_len=512, rng=None, mask_generator = None, ext_params=None, **kwargs):
     if not rng:
       rng = random
-    max_num_tokens = max_seq_len - 2
-
-    segments = [ example.segments[0].strip().split() ]
-    segments = _truncate_segments(segments, max_num_tokens, rng)
-    _tokens = ['[CLS]'] + segments[0] + ['[SEP]']
+    assert(len(example) < max_seq_len-2)
+    _tokens = [tokenizer.cls_id, *example, tokenizer.sep_id]
     if mask_generator:
-      tokens, lm_labels = mask_generator.mask_tokens(_tokens, rng)
-    token_ids = tokenizer.convert_tokens_to_ids(tokens)
+      token_ids, lm_labels = mask_generator.mask_tokens(_tokens, rng)
 
-    features = OrderedDict(input_ids = token_ids,
-      position_ids = list(range(len(token_ids))),
-      input_mask = [1]*len(token_ids),
-      labels = lm_labels)
+    features = OrderedDict(input_ids=token_ids, position_ids=list(range(len(token_ids))), input_mask=[1]*len(token_ids), labels=lm_labels)
     
     for f in features:
       features[f] = torch.tensor(features[f] + [0]*(max_seq_len - len(token_ids)), dtype=torch.int)
@@ -281,13 +249,3 @@ dataset_size = dataset_size, shuffle=True, **kwargs)
     """
     parser.add_argument('--max_ngram', type=int, default=1, help='Maxium ngram sampling span')
     parser.add_argument('--num_training_steps', type=int, default=None, help='Maxium pre-training steps')
-
-def test_MLM():
-  from ...deberta import tokenizers,load_vocab
-  import pdb
-  vocab_path, vocab_type = load_vocab(vocab_path = None, vocab_type = 'spm', pretrained_id = 'xlarge-v2')
-  tokenizer = tokenizers[vocab_type](vocab_path)
-  mask_gen = NGramMaskGenerator(tokenizer, max_gram=1)
-  mlm = MLMTask('/mnt/penhe/data/wiki103/spm', tokenizer, None)
-  train_data = mlm.train_data(mask_gen = mask_gen)
-  pdb.set_trace()

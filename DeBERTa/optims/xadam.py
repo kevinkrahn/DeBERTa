@@ -179,11 +179,12 @@ class XAdam(Optimizer):
     if self.opt_type == 'admax':
       eps_mode |= 0x10
 
-    with torch.cuda.device(param.device.index):
+    #with torch.cuda.device(param.device.index):
+    with torch.device(param.device):
       out_p = param.out_data if hasattr(param, 'out_data') and (param.out_data is not None) else None
       if out_p is None or out_p.dtype != grad.dtype:
         out_p = torch.tensor([], dtype=torch.float).to(param.data)
-      
+
       weight_decay = group['weight_decay_rate']
       adamw(param.data,
                     out_p,

@@ -56,7 +56,7 @@ class NNModule(nn.Module):
     raise NotImplementedError
 
   @classmethod
-  def load_model(cls, model_path, model_config=None, tag=None, no_cache=False, cache_dir=None , *inputs, **kwargs):
+  def load_model(cls, model_path, model_config=None, tag=None, no_cache=False, cache_dir=None, tokenizer=None, *inputs, **kwargs):
     """ Instantiate a sub-class of NNModule from a pre-trained model file.
       
     Args:
@@ -113,9 +113,13 @@ class NNModule(nn.Module):
           model_config.__dict__[k] = config.__dict__[k]
     if model_config is not None:
       config = copy.copy(model_config)
-    vocab_size = config.vocab_size
+
+    if tokenizer and config.vocab_size != len(tokenizer.vocab):
+      logger.info('Setting vocab size to {}'.format(len(tokenizer.vocab)))
+      config.vocab_size = len(tokenizer.vocab)
+
     # Instantiate model.
-    model = cls(config, *inputs, **kwargs)
+    model = cls(config, tokenizer=tokenizer, *inputs, **kwargs)
     if not model_state:
       return model
     # copy state_dict so _load_from_state_dict can modify it

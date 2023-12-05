@@ -32,7 +32,7 @@ class DynamicDataset(Dataset):
 
     self.shuffle = shuffle
     index_buf = mmap.mmap(-1, self.dataset_size*8)
-    shuffle_idx = np.ndarray(shape=(self.dataset_size, ), buffer=index_buf, dtype=np.int)
+    shuffle_idx = np.ndarray(shape=(self.dataset_size, ), buffer=index_buf, dtype=np.int32)
     shuffle_idx[:] = np.arange(self.dataset_size)[:]
     if self.shuffle:
       #rng = np.random.RandomState(0)
@@ -52,9 +52,12 @@ class DynamicDataset(Dataset):
     else:
       ext_params = None
     idx += self.index_offset
+    if isinstance(idx, (np.int32, np.int64)):
+      idx = idx.item()
     seed = idx
     rng = random.Random(seed)
-    # get seq length
     example_idx = self.shuffle_idx[idx%self.dataset_size]%self.ds_len
-    example = self.corpus[example_idx, rng, ext_params]
+    # Not sure what the original code used the rng and ext_params for
+    #example = self.corpus[example_idx, rng, ext_params]
+    example = self.corpus[example_idx]
     return self.feature_fn(example, rng, ext_params = ext_params)

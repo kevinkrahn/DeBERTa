@@ -51,10 +51,16 @@ def _setup_distributed_group(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
   else:
     set_logger(args.task_name, os.path.join(args.output_dir, f'training_{args.task_name}_{args.rank}.log'), rank=args.rank, verbose=1 if args.local_rank==0 else 0)
-    device_id = args.rank % args.n_gpu
-    if args.local_rank >= 0:
-      device_id = args.local_rank
-    device = torch.device("cuda", device_id)
+    if args.n_gpu == 0:
+      device_id = 0
+      device = torch.device("cpu")
+      logger.info("No GPU found. Using CPU.")
+      return device
+    else:
+      device_id = args.rank % args.n_gpu
+      if args.local_rank >= 0:
+        device_id = args.local_rank
+      device = torch.device("cuda", device_id)
     init_method = 'tcp://'
     init_method += args.master_ip + ':' + args.master_port
     distributed_backend = getattr(args, 'distributed_backend', 'nccl')
@@ -87,7 +93,8 @@ def initialize_distributed(args, join=True):
       args.n_gpu = get_ngpu()
 
     args.node_rank = args.rank
-    args.world_size = args.n_gpu * args.world_size
+    if args.n_gpu > 0:
+      args.world_size = args.n_gpu * args.world_size
     seed = args.seed
     is_child = False
     if args.world_size>1:
