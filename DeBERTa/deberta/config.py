@@ -75,6 +75,7 @@ class ModelConfig(AbsModelConfig):
 
         """
         
+        # TODO: these values are superfluous for RTD and CharToWord models
         self.hidden_size = 768
         self.num_hidden_layers = 12
         self.num_attention_heads = 12

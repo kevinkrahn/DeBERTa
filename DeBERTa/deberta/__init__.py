@@ -12,7 +12,6 @@ from __future__ import print_function
 
 from .tokenizers import *
 from .pooling import *
-from .mlm import MLMPredictionHead
 from .nnmodule import NNModule
 from .deberta import *
 from .disentangled_attention import *

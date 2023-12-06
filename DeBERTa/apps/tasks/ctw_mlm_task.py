@@ -1,6 +1,4 @@
 from collections import OrderedDict
-from bisect import bisect
-import math
 import numpy as np
 import os
 
@@ -15,96 +13,16 @@ from ...training import batch_to
 from ...data import DistributedBatchSampler, SequentialSampler, BatchSampler, AsyncDataLoader
 from ...data import DynamicDataset
 from ...utils import get_logger
-from ..models import MaskedLanguageModel
+from ..models import CharToWord_MaskedLanguageModel
 from .._utils import merge_distributed
+from .char_mlm_task import NGramMaskGenerator
 
 logger=get_logger()
 
-__all__ = ["Char_MLMTask"]
+__all__ = ["CharToWord_MLMTask"]
 
-class NGramMaskGenerator:
-  def __init__(self, tokenizer, mask_lm_prob=0.15, max_seq_len=512, max_preds_per_seq=None, max_gram=1, keep_prob=0.1, mask_prob=0.8, **kwargs):
-    self.tokenizer = tokenizer
-    self.mask_lm_prob = mask_lm_prob
-    self.keep_prob = keep_prob
-    self.mask_prob = mask_prob
-    assert self.mask_prob+self.keep_prob<=1, f'The prob of using [MASK]({mask_prob}) and the prob of using original token({keep_prob}) should between [0,1]'
-    self.max_preds_per_seq = max_preds_per_seq
-    if max_preds_per_seq is None:
-      self.max_preds_per_seq = math.ceil(max_seq_len*mask_lm_prob/10)*10
-
-    self.max_gram = max(max_gram, 1)
-    self.mask_window = int(1/mask_lm_prob) # make ngrams per window sized context
-    self.vocab_words = list(set(tokenizer.vocab.values()).difference(tokenizer.special_tokens))
-
-  def mask_tokens(self, tokens, rng, **kwargs):
-    ngrams = np.arange(1, self.max_gram + 1, dtype=np.int64)
-    pvals = 1. / np.arange(1, self.max_gram + 1)
-    pvals /= pvals.sum(keepdims=True)
-
-    # Each word is prefixed by a [WORD_CLS] token
-    unigrams = []
-    last_word = []
-    for i in range(len(tokens)):
-      token_id = tokens[i]
-      if token_id == self.tokenizer.word_cls_id or token_id == self.tokenizer.sep_id:
-        if len(last_word) > 0:
-          unigrams.append(last_word)
-        last_word = []
-      elif token_id in self.tokenizer.special_token_indices:
-        continue
-      else:
-        last_word.append(i)
-
-    num_to_predict = min(self.max_preds_per_seq, max(1, int(round(len(tokens) * self.mask_lm_prob))))
-    offset = 0
-    mask_grams = np.array([False]*len(unigrams))
-    while offset < len(unigrams):
-      n = self._choice(rng, ngrams, p=pvals)
-      ctx_size = min(n*self.mask_window, len(unigrams)-offset)
-      m = rng.randint(0, ctx_size-1)
-      s = offset + m
-      e = min(offset+m+n, len(unigrams))
-      offset = max(offset+ctx_size, e)
-      mask_grams[s:e] = True
-
-    target_labels = [None]*len(tokens)
-    w_cnt = 0
-    # Mask the chars in the chosen words
-    for m,word in zip(mask_grams, unigrams):
-      if m:
-        for idx in word:
-          label = self._mask_token(idx, tokens, rng, self.mask_prob, self.keep_prob)
-          target_labels[idx] = label
-          w_cnt += 1
-        if w_cnt >= num_to_predict:
-          break
-
-    target_labels = [token_id if token_id else 0 for token_id in target_labels]
-    return tokens, target_labels
-
-  def _choice(self, rng, data, p):
-    cul = np.cumsum(p)
-    x = rng.random()*cul[-1]
-    id = bisect(cul, x)
-    return data[id]
-
-  def _mask_token(self, idx, tokens, rng, mask_prob, keep_prob):
-    label = tokens[idx]
-    rand = rng.random()
-    if rand < mask_prob:
-      new_label = self.tokenizer.mask_id
-    elif rand < mask_prob+keep_prob:
-      new_label = label
-    else:
-      new_label = rng.choice(self.vocab_words)
-
-    tokens[idx] = new_label
-
-    return label
-
-@register_task(name="Char_MLM", desc="Masked language model pretraining task")
-class Char_MLMTask(Task):
+@register_task(name="CharToWord_MLM", desc="Masked language model pretraining task")
+class CharToWord_MLMTask(Task):
   def __init__(self, data_dir, tokenizer, args, **kwargs):
     super().__init__(tokenizer, args, **kwargs)
     self.data_dir = data_dir
@@ -113,42 +31,34 @@ class Char_MLMTask(Task):
   def train_data(self, max_seq_len=512, **kwargs):
     examples = self.load_data(os.path.join(self.data_dir, 'train.txt'))
     dataset_size = len(examples) if self.args.num_training_steps is None else self.args.num_training_steps*self.args.train_batch_size
-    return DynamicDataset(examples, feature_fn=self.get_feature_fn(max_seq_len=max_seq_len, mask_gen=self.mask_gen), \
-dataset_size = dataset_size, shuffle=True, **kwargs)
+    return DynamicDataset(examples, feature_fn=self.get_feature_fn(max_seq_len=max_seq_len, mask_gen=self.mask_gen), dataset_size=dataset_size, shuffle=True, **kwargs)
 
   def get_labels(self):
     return list(self.tokenizer.vocab.values())
 
   def eval_data(self, max_seq_len=512, **kwargs):
-    ds = [ self._data('dev', 'valid.txt', 'dev') ]
+    ds = [self._data('dev', 'valid.txt')]
     for d in ds:
       _size = len(d.data)
-      d.data = DynamicDataset(d.data, feature_fn=self.get_feature_fn(max_seq_len=max_seq_len, mask_gen=self.mask_gen), dataset_size = _size, **kwargs)
+      d.data = DynamicDataset(d.data, feature_fn=self.get_feature_fn(max_seq_len=max_seq_len, mask_gen=self.mask_gen), dataset_size=_size, **kwargs)
     return ds
 
-  def test_data(self, max_seq_len=512, **kwargs):
-    """See base class."""
-    raise NotImplemented('This method is not implemented yet.')
-
-  def _data(self, name, path, type_name='dev', ignore_metric=False):
-    if isinstance(path, str):
-      path = [path]
+  def _data(self, name, path, ignore_metric=False):
+    path = [path] if isinstance(path, str) else path
     examples = []
     for p in path:
       input_src = os.path.join(self.data_dir, p)
       assert os.path.exists(input_src), f"{input_src} doesn't exists"
       examples.extend(self.load_data(input_src))
-
     predict_fn = self.get_predict_fn()
-    return EvalData(name, examples,
-      metrics_fn=self.get_metrics_fn(), predict_fn=predict_fn, ignore_metric=ignore_metric, critial_metrics=['accuracy'])
+    return EvalData(name, examples, metrics_fn=self.get_metrics_fn(), predict_fn=predict_fn, ignore_metric=ignore_metric, critial_metrics=['accuracy'])
 
   def get_metrics_fn(self):
     """Calcuate metrics based on prediction results"""
     def metrics_fn(logits, labels):
       preds = logits
-      acc = (preds==labels).sum()/len(labels)
-      metrics =  OrderedDict(accuracy= acc)
+      acc = (preds == labels).sum() / len(labels)
+      metrics = OrderedDict(accuracy=acc)
       return metrics
     return metrics_fn
 
@@ -159,24 +69,59 @@ dataset_size = dataset_size, shuffle=True, **kwargs)
         examples.append([int(id) for id in line.strip().split()])
     return examples
 
-  def get_feature_fn(self, max_seq_len = 512, mask_gen = None):
+  def get_feature_fn(self, max_seq_len=512, mask_gen=None):
     def _example_to_feature(example, rng=None, ext_params=None, **kwargs):
-      return self.example_to_feature(self.tokenizer, example, max_seq_len = max_seq_len, \
-        rng = rng, mask_generator = mask_gen, ext_params = ext_params, **kwargs)
+      return self.example_to_feature(self.tokenizer, example, max_seq_len=max_seq_len, \
+        rng=rng, mask_generator=mask_gen, ext_params=ext_params, **kwargs)
     return _example_to_feature
 
-  def example_to_feature(self, tokenizer, example, max_seq_len=512, rng=None, mask_generator = None, ext_params=None, **kwargs):
+  def example_to_feature(self, tokenizer, example, max_seq_len, rng=None, mask_generator=None, ext_params=None, **kwargs):
     if not rng:
       rng = random
-    assert(len(example) < max_seq_len-2)
-    _tokens = [tokenizer.cls_id, *example, tokenizer.sep_id]
-    if mask_generator:
-      token_ids, lm_labels = mask_generator.mask_tokens(_tokens, rng)
 
-    features = OrderedDict(input_ids=token_ids, position_ids=list(range(len(token_ids))), input_mask=[1]*len(token_ids), labels=lm_labels)
-    
-    for f in features:
-      features[f] = torch.tensor(features[f] + [0]*(max_seq_len - len(token_ids)), dtype=torch.int)
+    _tokens = [tokenizer.word_cls_id, tokenizer.cls_id, *example, tokenizer.word_cls_id, tokenizer.sep_id]
+
+    # TODO: Read this value from args or config
+    max_word_chars = 20
+
+    _last_word = []
+    _num_words = 0
+
+    _padded_tokens = []
+    _position_ids = []
+    _char_input_mask = []
+    for i in range(len(_tokens)):
+      token_id = _tokens[i]
+      is_end = (i == len(_tokens)-1)
+      if token_id == self.tokenizer.word_cls_id or is_end:
+        if is_end:
+          _last_word.append(token_id)
+        if len(_last_word) > 0:
+          pad_length = max_word_chars - len(_last_word)
+          #_position_ids.extend([*range(i-len(_last_word)+int(is_end), i+int(is_end))] + [0]*pad_length)
+          # TODO: Generate position ids for words, not characters
+          _position_ids.extend([0]*len(_last_word) + [0]*pad_length)
+          _char_input_mask.extend([1]*len(_last_word) + [0]*pad_length)
+          _last_word = _last_word + [self.tokenizer.pad_id]*pad_length
+          _padded_tokens.extend(_last_word)
+          _num_words += 1
+        _last_word = [token_id]
+      else:
+        _last_word.append(token_id)
+
+    _num_pad_words = max_seq_len - _num_words
+    _padded_tokens.extend([self.tokenizer.pad_id]*max_word_chars*_num_pad_words)
+    _position_ids.extend([0]*max_word_chars*_num_pad_words)
+    _char_input_mask.extend([0]*max_word_chars*_num_pad_words)
+
+    if mask_generator:
+      token_ids, lm_labels = mask_generator.mask_tokens(_padded_tokens, rng)
+
+    features = OrderedDict(
+      input_ids=torch.tensor(token_ids, dtype=torch.long).reshape(max_seq_len, max_word_chars),
+      char_input_mask=torch.tensor(_char_input_mask, dtype=torch.long).reshape(max_seq_len, max_word_chars),
+      position_ids=torch.tensor(_position_ids, dtype=torch.long),
+      labels=torch.tensor(lm_labels, dtype=torch.long))
     return features
 
   def get_eval_fn(self):
@@ -239,7 +184,7 @@ dataset_size = dataset_size, shuffle=True, **kwargs)
 
   def get_model_class_fn(self):
     def partial_class(*wargs, **kwargs):
-      return MaskedLanguageModel.load_model(*wargs, **kwargs)
+      return CharToWord_MaskedLanguageModel.load_model(*wargs, **kwargs)
     return partial_class
 
   @classmethod

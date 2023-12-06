@@ -121,6 +121,7 @@ class Fp16Optimizer(object):
   def step(self, lr_scale, loss_scale = 1):
     grad_scale = self._grad_scale(loss_scale)
     if grad_scale is None or math.isinf(grad_scale):
+      print('grad_scale:', grad_scale)
       self.loss_scaler.update(False)
       return False
 
