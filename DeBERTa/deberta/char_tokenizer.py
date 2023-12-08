@@ -4,13 +4,12 @@
 import os
 import json
 import re
-from ..utils import get_logger
-logger = get_logger()
 
 
 __all__ = ['CharTokenizer']
 
 class CharTokenizer:
+  """ This tokenizer is stored as a json file with a list of characters. """
   def __init__(self, vocab_file, special_tokens=[]):
     assert os.path.exists(vocab_file)
 

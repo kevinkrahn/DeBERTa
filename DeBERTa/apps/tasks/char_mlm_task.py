@@ -56,6 +56,10 @@ class NGramMaskGenerator:
       else:
         last_word.append(i)
 
+    # Mask random characters instead of entire words if the number of words is small
+    if len(unigrams) < 4:
+      unigrams = [[i] for i in range(len(tokens)) if tokens[i] not in self.tokenizer.special_token_indices]
+
     num_to_predict = min(self.max_preds_per_seq, max(1, int(round(len(tokens) * self.mask_lm_prob))))
     offset = 0
     mask_grams = np.array([False]*len(unigrams))
