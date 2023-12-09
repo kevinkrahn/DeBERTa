@@ -9,15 +9,16 @@ export PYTHONPATH="$ROOT_DIR"
 cd "$ROOT_DIR"
 
 if [ $# -lt 4 ]; then
-	echo "Usage: $0 <config_path> <vocab_path> <output_dir> <train_file> <validation_file>"
+	echo "Usage: $0 <task> <config_path> <vocab_path> <output_dir> <train_file> <validation_file>"
 	exit 0
 fi
 
-config=$1
-vocab_path=$2
-output_dir=$3
-train_file=$4
-validation_file=$5
+task=$1
+config=$2
+vocab_path=$3
+output_dir=$4
+train_file=$5
+validation_file=$6
 
 max_seq_length=512
 vocab_type=spm_char
@@ -31,17 +32,20 @@ python "$SCRIPT_DIR/prepare_data.py" \
 	--vocab_path "$vocab_path" \
 	--vocab_type $vocab_type \
 	--output_dir "$data_dir" \
-	--max_seq_length $max_seq_length
+	--max_seq_length $max_seq_length \
+	--char_to_word
 
 python -m DeBERTa.apps.run \
 	--model_config "$config"  \
 	--do_train \
-	--num_training_steps 5 \
+	--num_train_epochs 1 \
 	--max_seq_len $max_seq_length \
 	--data_dir "$data_dir" \
 	--vocab_path "$vocab_path" \
 	--vocab_type $vocab_type \
 	--output_dir "$output_dir" \
-	--task_name Char_MLM \
+	--task_name "$task" \
+	--dataloader_buffer_size 5 \
+	--workers 1 \
 	--dump 20 \
-	--train_batch_size 32
+	--train_batch_size 4

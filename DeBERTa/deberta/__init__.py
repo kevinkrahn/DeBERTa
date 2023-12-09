@@ -14,6 +14,7 @@ from .tokenizers import *
 from .pooling import *
 from .nnmodule import NNModule
 from .deberta import *
+from .ctw_deberta import *
 from .disentangled_attention import *
 from .ops import *
 from .bert import *

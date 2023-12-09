@@ -12,123 +12,20 @@ from .task import EvalData, Task
 from .task_registry import register_task
 from ...utils import xtqdm as tqdm
 from ...data import DynamicDataset
-from ...deberta import NNModule
 from ...utils import get_logger,boolean_string
 from ...training import DistributedTrainer, batch_to
 from ...data import DistributedBatchSampler, SequentialSampler, BatchSampler, AsyncDataLoader
-from ..models import MaskedLanguageModel, ReplacedTokenDetectionModel
 from .char_mlm_task import NGramMaskGenerator
+from .char_rtd_task import RTDModel
+from ..models import CharToWord_MaskedLanguageModel, CharToWord_ReplacedTokenDetectionModel
 from .._utils import merge_distributed
 
 logger = get_logger()
 
-__all__ = ["Char_RTDTask"]
+__all__ = ["CharToWord_RTDTask"]
 
-class RTDModel(NNModule):
-  def __init__(self, config, tokenizer=None, generator_class=MaskedLanguageModel,
-               discriminator_class=ReplacedTokenDetectionModel, *wargs, **kwargs):
-    super().__init__(config)
-    gen_config = config.generator
-    disc_config = config.discriminator
-    self.config = config
-
-    if tokenizer and gen_config.vocab_size != len(tokenizer.vocab):
-      gen_config.vocab_size = len(tokenizer.vocab)
-    if tokenizer and disc_config.vocab_size != len(tokenizer.vocab):
-      disc_config.vocab_size = len(tokenizer.vocab)
-
-    self.generator = generator_class(gen_config)
-    self.discriminator = discriminator_class(disc_config)
-
-    self.generator._register_load_state_dict_pre_hook(self._pre_load_hook)
-    self.discriminator._register_load_state_dict_pre_hook(self._pre_load_hook)
-
-    self.share_embedding = getattr(config, 'embedding_sharing', "none").lower()
-    if self.share_embedding == 'gdes': # Gradient-disentangled weight/embedding sharing
-      word_bias = torch.zeros_like(self.discriminator.deberta.embeddings.word_embeddings.weight)
-      word_bias = torch.nn.Parameter(word_bias)
-      position_bias = torch.zeros_like(self.discriminator.deberta.embeddings.position_embeddings.weight)
-      position_bias = torch.nn.Parameter(position_bias)
-      delattr(self.discriminator.deberta.embeddings.word_embeddings, 'weight')
-      self.discriminator.deberta.embeddings.word_embeddings.register_parameter('_weight', word_bias)
-      delattr(self.discriminator.deberta.embeddings.position_embeddings, 'weight')
-      self.discriminator.deberta.embeddings.position_embeddings.register_parameter('_weight', position_bias)
-    self.register_discriminator_fw_hook()
-
-  def _pre_load_hook(self, state_dict, prefix, local_metadata, strict,
-      missing_keys, unexpected_keys, error_msgs):
-    bert_prefix = prefix + 'bert.'
-    deberta_prefix = prefix + 'deberta.'
-    for k in list(state_dict.keys()):
-      if k.startswith(bert_prefix):
-        nk = deberta_prefix + k[len(bert_prefix):]
-        value = state_dict[k]
-        del state_dict[k]
-        state_dict[nk] = value
-
-  def forward(self, **kwargs):
-    return self.generator_fw(**kwargs)
-
-  def discriminator_fw(self, **kwargs):
-    return self.discriminator(**kwargs)
-
-  def generator_fw(self, **kwargs):
-    return self.generator(**kwargs)
-
-  def topk_sampling(self, logits, topk = 1, start=0, temp=1):
-    top_p = torch.nn.functional.softmax(logits/temp, dim=-1)
-    topk = max(1, topk)
-    next_tokens = torch.multinomial(top_p, topk)
-    return next_tokens, top_p
-  
-  def make_electra_data(self, input_data, temp=1, rand=None):
-    new_data = input_data.copy()
-    if rand is None:
-      rand = random
-    gen = self.generator_fw(**new_data)
-    lm_logits = gen['logits']
-    lm_labels = input_data['labels']
-    lm_loss = gen['loss']
-    mask_index = (lm_labels.view(-1)>0).nonzero().view(-1)
-    gen_pred = torch.argmax(lm_logits, dim=1).detach().cpu().numpy()
-    topk_labels, top_p = self.topk_sampling(lm_logits, topk=1, temp=temp)
-    
-    top_ids = torch.zeros_like(lm_labels.view(-1))
-    top_ids.scatter_(index=mask_index, src=topk_labels.view(-1).int(), dim=-1)
-    top_ids = top_ids.view(lm_labels.size())
-    new_ids = torch.where(lm_labels>0, top_ids, input_data['input_ids'])
-    new_data['input_ids'] = new_ids.detach()
-    return new_data, lm_loss, gen
-
-  def register_discriminator_fw_hook(self, *wargs):
-    def fw_hook(module, *inputs):
-      if self.share_embedding == 'gdes': # Gradient-disentangled weight/embedding sharing
-        g_w_ebd = self.generator.deberta.embeddings.word_embeddings
-        d_w_ebd = self.discriminator.deberta.embeddings.word_embeddings
-        self._set_param(d_w_ebd, 'weight', g_w_ebd.weight.detach() + d_w_ebd._weight)
-
-        g_p_ebd = self.generator.deberta.embeddings.position_embeddings
-        d_p_ebd = self.discriminator.deberta.embeddings.position_embeddings
-        self._set_param(d_p_ebd, 'weight', g_p_ebd.weight.detach() + d_p_ebd._weight)
-      elif self.share_embedding == 'es': # vallina embedding sharing
-        g_w_ebd = self.generator.deberta.embeddings.word_embeddings
-        d_w_ebd = self.discriminator.deberta.embeddings.word_embeddings
-        self._set_param(d_w_ebd, 'weight', g_w_ebd.weight)
-
-        g_p_ebd = self.generator.deberta.embeddings.position_embeddings
-        d_p_ebd = self.discriminator.deberta.embeddings.position_embeddings
-        self._set_param(d_p_ebd, 'weight', g_p_ebd.weight)
-      return None
-    self.discriminator.register_forward_pre_hook(fw_hook)
-
-  @staticmethod
-  def _set_param(module, param_name, value):
-    if hasattr(module, param_name):
-      delattr(module, param_name)
-    module.register_buffer(param_name, value)
-
-@register_task(name="Char_RTD", desc="Replaced token detection pretraining task")
-class Char_RTDTask(Task):
+@register_task(name="CharToWord_RTD", desc="Replaced token detection pretraining task")
+class CharToWord_RTDTask(Task):
   def __init__(self, data_dir, tokenizer, args, **kwargs):
     super().__init__(tokenizer, args, **kwargs)
     self.data_dir = data_dir
@@ -193,21 +90,58 @@ dataset_size=dataset_size, shuffle=True, **kwargs)
   def example_to_feature(self, tokenizer, example, max_seq_len=512, rng=None, mask_generator = None, ext_params=None, **kwargs):
     if not rng:
       rng = random
-    assert(len(example) < max_seq_len-2)
 
-    _tokens = [tokenizer.cls_id, *example, tokenizer.sep_id]
+    tokens = [tokenizer.word_cls_id, tokenizer.cls_id, *example, tokenizer.word_cls_id, tokenizer.sep_id]
+
+    # TODO: Read this value from args or config
+    max_word_chars = 20
+
+    padded_tokens = []
+    char_position_ids = []
+    char_input_mask = []
+
+    last_word = []
+    num_words = 0
+    for i in range(len(tokens)):
+      token_id = tokens[i]
+      is_end = (i == len(tokens)-1)
+      if token_id == self.tokenizer.word_cls_id or is_end:
+        if is_end:
+          last_word.append(token_id)
+        if len(last_word) > 0:
+          pad_length = max_word_chars - len(last_word)
+          char_position_ids.extend([*range(len(last_word))] + [0]*pad_length)
+          char_input_mask.extend([1]*len(last_word) + [0]*pad_length)
+          last_word = last_word + [self.tokenizer.pad_id]*pad_length
+          padded_tokens.extend(last_word)
+          num_words += 1
+        last_word = [token_id]
+      else:
+        last_word.append(token_id)
+
+    num_pad_words = max_seq_len - num_words
+    padded_tokens.extend([self.tokenizer.pad_id]*max_word_chars*num_pad_words)
+    char_position_ids.extend([0]*max_word_chars*num_pad_words)
+    char_input_mask.extend([0]*max_word_chars*num_pad_words)
+    word_input_mask = [1]*num_words + [0]*num_pad_words
+    word_position_ids = [*range(num_words)] + [0]*num_pad_words
+
     if mask_generator:
-      token_ids, lm_labels = mask_generator.mask_tokens(_tokens, rng)
+      token_ids, lm_labels = mask_generator.mask_tokens(padded_tokens, rng)
 
-    features = OrderedDict(input_ids=token_ids, position_ids=list(range(len(token_ids))), input_mask=[1]*len(token_ids), labels=lm_labels)
-    
-    for f in features:
-      features[f] = torch.tensor(features[f] + [0]*(max_seq_len - len(token_ids)), dtype=torch.int)
+    features = OrderedDict(
+      input_ids=torch.tensor(token_ids, dtype=torch.long).reshape(max_seq_len, max_word_chars),
+      char_input_mask=torch.tensor(char_input_mask, dtype=torch.long).reshape(max_seq_len, max_word_chars),
+      word_input_mask=torch.tensor(word_input_mask, dtype=torch.long),
+      char_position_ids=torch.tensor(char_position_ids, dtype=torch.long),
+      word_position_ids=torch.tensor(word_position_ids, dtype=torch.long),
+      labels=torch.tensor(lm_labels, dtype=torch.long))
     return features
 
   def get_model_class_fn(self):
     def partial_class(*wargs, **kwargs):
-      model = RTDModel.load_model(*wargs, **kwargs)
+      model = RTDModel.load_model(*wargs, generator_class=CharToWord_MaskedLanguageModel,
+                                  discriminator_class=CharToWord_ReplacedTokenDetectionModel, **kwargs)
       if self.args.init_generator is not None:
         logger.info(f'Load generator from {self.args.init_generator}')
         generator = torch.load(self.args.init_generator, map_location='cpu')

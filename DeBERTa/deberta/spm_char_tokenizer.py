@@ -2,8 +2,6 @@
 # LICENSE file in the root directory of this source tree.
 
 import os
-import json
-import re
 import sentencepiece as sp
 from ..utils import get_logger
 logger = get_logger()
@@ -38,12 +36,3 @@ class SPMCharTokenizer:
 
   def id(self, sym):
     return self.vocab[sym] if sym in self.vocab else 1
-
-
-def make_vocab(source_file, output_file):
-    with open(source_file, 'r') as f:
-        text = f.read()
-        text = re.sub(r'\s+', '', text)
-    chars = set(text)
-    with open(output_file, 'w') as f:
-        json.dump({'tokens':list(chars)}, f, indent=2, ensure_ascii=False)

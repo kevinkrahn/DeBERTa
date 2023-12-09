@@ -399,6 +399,11 @@ def build_argument_parser():
             type=int,
             help="Total batch size for prediction.")
 
+  parser.add_argument("--dataloader_buffer_size",
+            default=100,
+            type=int,
+            help="The number of batches for the AsyncDataLoader to preload.")
+
   parser.add_argument('--init_model',
             type=str,
             help="The model state file used to initialize the model weights.")

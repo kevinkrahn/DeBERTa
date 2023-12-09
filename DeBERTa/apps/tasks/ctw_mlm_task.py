@@ -79,48 +79,50 @@ class CharToWord_MLMTask(Task):
     if not rng:
       rng = random
 
-    _tokens = [tokenizer.word_cls_id, tokenizer.cls_id, *example, tokenizer.word_cls_id, tokenizer.sep_id]
+    tokens = [tokenizer.word_cls_id, tokenizer.cls_id, *example, tokenizer.word_cls_id, tokenizer.sep_id]
 
     # TODO: Read this value from args or config
     max_word_chars = 20
 
-    _last_word = []
-    _num_words = 0
+    padded_tokens = []
+    char_position_ids = []
+    char_input_mask = []
 
-    _padded_tokens = []
-    _position_ids = []
-    _char_input_mask = []
-    for i in range(len(_tokens)):
-      token_id = _tokens[i]
-      is_end = (i == len(_tokens)-1)
+    last_word = []
+    num_words = 0
+    for i in range(len(tokens)):
+      token_id = tokens[i]
+      is_end = (i == len(tokens)-1)
       if token_id == self.tokenizer.word_cls_id or is_end:
         if is_end:
-          _last_word.append(token_id)
-        if len(_last_word) > 0:
-          pad_length = max_word_chars - len(_last_word)
-          #_position_ids.extend([*range(i-len(_last_word)+int(is_end), i+int(is_end))] + [0]*pad_length)
-          # TODO: Generate position ids for words, not characters
-          _position_ids.extend([0]*len(_last_word) + [0]*pad_length)
-          _char_input_mask.extend([1]*len(_last_word) + [0]*pad_length)
-          _last_word = _last_word + [self.tokenizer.pad_id]*pad_length
-          _padded_tokens.extend(_last_word)
-          _num_words += 1
-        _last_word = [token_id]
+          last_word.append(token_id)
+        if len(last_word) > 0:
+          pad_length = max_word_chars - len(last_word)
+          char_position_ids.extend([*range(len(last_word))] + [0]*pad_length)
+          char_input_mask.extend([1]*len(last_word) + [0]*pad_length)
+          last_word = last_word + [self.tokenizer.pad_id]*pad_length
+          padded_tokens.extend(last_word)
+          num_words += 1
+        last_word = [token_id]
       else:
-        _last_word.append(token_id)
+        last_word.append(token_id)
 
-    _num_pad_words = max_seq_len - _num_words
-    _padded_tokens.extend([self.tokenizer.pad_id]*max_word_chars*_num_pad_words)
-    _position_ids.extend([0]*max_word_chars*_num_pad_words)
-    _char_input_mask.extend([0]*max_word_chars*_num_pad_words)
+    num_pad_words = max_seq_len - num_words
+    padded_tokens.extend([self.tokenizer.pad_id]*max_word_chars*num_pad_words)
+    char_position_ids.extend([0]*max_word_chars*num_pad_words)
+    char_input_mask.extend([0]*max_word_chars*num_pad_words)
+    word_input_mask = [1]*num_words + [0]*num_pad_words
+    word_position_ids = [*range(num_words)] + [0]*num_pad_words
 
     if mask_generator:
-      token_ids, lm_labels = mask_generator.mask_tokens(_padded_tokens, rng)
+      token_ids, lm_labels = mask_generator.mask_tokens(padded_tokens, rng)
 
     features = OrderedDict(
       input_ids=torch.tensor(token_ids, dtype=torch.long).reshape(max_seq_len, max_word_chars),
-      char_input_mask=torch.tensor(_char_input_mask, dtype=torch.long).reshape(max_seq_len, max_word_chars),
-      position_ids=torch.tensor(_position_ids, dtype=torch.long),
+      char_input_mask=torch.tensor(char_input_mask, dtype=torch.long).reshape(max_seq_len, max_word_chars),
+      word_input_mask=torch.tensor(word_input_mask, dtype=torch.long),
+      char_position_ids=torch.tensor(char_position_ids, dtype=torch.long),
+      word_position_ids=torch.tensor(word_position_ids, dtype=torch.long),
       labels=torch.tensor(lm_labels, dtype=torch.long))
     return features
 
