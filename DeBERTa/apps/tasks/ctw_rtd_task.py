@@ -174,7 +174,7 @@ dataset_size=dataset_size, shuffle=True, **kwargs)
     def metrics_fn(logits, labels):
       preds = logits
       acc = (preds==labels).sum()/len(labels)
-      metrics =  OrderedDict(accuracy= acc)
+      metrics = OrderedDict(accuracy=acc)
       return metrics
     return metrics_fn
 

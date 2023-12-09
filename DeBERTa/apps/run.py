@@ -404,6 +404,11 @@ def build_argument_parser():
             type=int,
             help="The number of batches for the AsyncDataLoader to preload.")
 
+  parser.add_argument("--log_steps",
+            default=100,
+            type=int,
+            help="The steps interval to log training state.")
+
   parser.add_argument('--init_model',
             type=str,
             help="The model state file used to initialize the model weights.")

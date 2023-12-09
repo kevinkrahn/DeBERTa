@@ -32,8 +32,7 @@ python "$SCRIPT_DIR/prepare_data.py" \
 	--vocab_path "$vocab_path" \
 	--vocab_type $vocab_type \
 	--output_dir "$data_dir" \
-	--max_seq_length $max_seq_length \
-	--char_to_word
+	--max_seq_length $max_seq_length
 
 python -m DeBERTa.apps.run \
 	--model_config "$config"  \
@@ -47,5 +46,5 @@ python -m DeBERTa.apps.run \
 	--task_name "$task" \
 	--dataloader_buffer_size 5 \
 	--workers 1 \
-	--dump 20 \
+	--dump 200 \
 	--train_batch_size 4

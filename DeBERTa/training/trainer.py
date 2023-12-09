@@ -12,6 +12,7 @@ import random
 import time
 import numpy as np
 import pdb
+import tqdm
 from collections import defaultdict, OrderedDict
 from collections.abc import Mapping, Sequence
 from torch.utils.data import DataLoader
@@ -132,24 +133,28 @@ class DistributedTrainer:
 
     rank = self.args.rank
     world_size = self.args.world_size
+    pbar = tqdm.tqdm(total=self.training_steps, desc='Training', ncols=100)
     for n_epoch in range(self.trainer_state.epochs, self.training_epochs):
       batch_sampler = BatchSampler(self.train_sampler, self.args.train_batch_size)
       batch_sampler = DistributedBatchSampler(batch_sampler, rank = rank, world_size = world_size)
       batch_sampler.next = self.trainer_state.next_batch
       num_workers = getattr(self.args, 'workers', 2)
       train_dataloader = DataLoader(self.train_data, batch_sampler=batch_sampler, num_workers=num_workers, worker_init_fn=self.init_fn, pin_memory=False)
+      logger.info(f'Epoch {n_epoch}')
       torch.cuda.empty_cache()
-      for step, batch in enumerate(AsyncDataLoader(train_dataloader, 100)):
+      for step, batch in enumerate(AsyncDataLoader(train_dataloader, self.args.dataloader_buffer_size)):
         if self.trainer_state.steps >= self.training_steps:
           break
         bs_scale = 1
         batch = batch_to(batch, self.device)
         self._train_step(batch, bs_scale)
+        pbar.update(1)
       # Save model
       self.trainer_state.epochs += 1
       self.trainer_state.next_batch = 0
       self.trainer_state.report_state()
       self._eval_model()
+    pbar.close()
 
   def save_model(self, args, checkpoint_dir, chk_postfix, model, optimizer):
     save_path= os.path.join(checkpoint_dir, f'pytorch.model-{chk_postfix}.bin')
@@ -230,7 +235,7 @@ class DistributedTrainer:
     if self.post_loss_fn is not None:
       self.post_loss_fn(forward_outputs)
 
-    if self.trainer_state.steps%100 == 0:
+    if self.trainer_state.steps%self.args.log_steps == 0:
       self.trainer_state.report_state()
     if self.trainer_state.steps%self.dump_interval == 0:
       self._eval_model()

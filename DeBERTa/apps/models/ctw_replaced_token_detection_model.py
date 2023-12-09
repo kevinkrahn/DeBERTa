@@ -38,8 +38,8 @@ class CharToWord_ReplacedTokenDetectionModel(NNModule):
     input_idx = (input_mask > 0).nonzero().view(-1)
     mask_labels = ((labels > 0) & (labels != input_ids.view(labels.shape))).view(-1)
     mask_labels = torch.gather(mask_labels.to(mask_logits), 0, input_idx)
-    mask_loss_fn = torch.nn.BCEWithLogitsLoss(reduction='none')
     mask_logits = torch.gather(mask_logits, 0, input_idx).float()
+    mask_loss_fn = torch.nn.BCEWithLogitsLoss(reduction='none')
     mask_loss = mask_loss_fn(mask_logits, mask_labels)
     return {
       'logits' : mask_logits,
