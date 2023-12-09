@@ -11,7 +11,7 @@ from .ops import *
 from .bert import *
 from .cache_utils import load_model_state
 
-__all__ = ['CharToWord_DeBERTa', 'CharToWord_LMPredictionHead']
+__all__ = ['CharToWord_DeBERTa', 'CharToWord_LMPredictionHead', 'CharToWord_LMMaskPredictionHead']
 
 class CharToWord_DeBERTa(torch.nn.Module):
   def __init__(self, config=None, pre_trained=None):
@@ -23,10 +23,10 @@ class CharToWord_DeBERTa(torch.nn.Module):
     
     self.char_embeddings = torch.nn.Embedding(config.vocab_size, config.intra_word_encoder.hidden_size, padding_idx=0)
     self.char_embedding_layer_norm = LayerNorm(config.intra_word_encoder.hidden_size, config.intra_word_encoder.layer_norm_eps)
-    self.char_embedding_dropout = StableDropout(config.hidden_dropout_prob)
+    self.char_embedding_dropout = StableDropout(config.intra_word_encoder.hidden_dropout_prob)
 
-    #self.word_position_biased_input = getattr(config.intra_word_encoder, 'position_biased_input', True)
-    #self.word_position_embeddings = torch.nn.Embedding(config.inter_word_encoder.max_position_embeddings, config.inter_word_encoder.hidden_size)
+    #self.position_biased_input = getattr(config.intra_word_encoder, 'position_biased_input', True)
+    self.word_position_embeddings = torch.nn.Embedding(config.inter_word_encoder.max_position_embeddings, config.inter_word_encoder.hidden_size)
 
     self.config = config
     self.pre_trained = pre_trained
@@ -98,9 +98,9 @@ class CharToWord_LMPredictionHead(torch.nn.Module):
     def __init__(self, config):
         super().__init__()
         self.dense = torch.nn.Linear(config.intra_word_encoder.hidden_size, config.vocab_size)
-        self.transform_act_fn = ACT2FN[config.hidden_act] if isinstance(config.hidden_act, str) else config.hidden_act
+        self.transform_act_fn = ACT2FN[config.intra_word_encoder.hidden_act] if isinstance(config.intra_word_encoder.hidden_act, str) else config.intra_word_encoder.hidden_act
         #self.bias = torch.nn.Parameter(torch.zeros(config.vocab_size))
-        #self.LayerNorm = LayerNorm(self.embedding_size, config.layer_norm_eps, elementwise_affine=True)
+        #self.LayerNorm = LayerNorm(config.intra_word_encoder.hidden_size, config.intra_word_encoder.layer_norm_eps, elementwise_affine=True)
 
         intra_word_encoder_config = copy.copy(config.intra_word_encoder)
         intra_word_encoder_config.num_hidden_layers = 1
@@ -143,7 +143,7 @@ class CharToWord_LMMaskPredictionHead(torch.nn.Module):
     """ Prediction head used for replaced token detection. """
     def __init__(self, config):
         super().__init__()
-        self.layer_norm = LayerNorm(self.embedding_size, config.layer_norm_eps, elementwise_affine=True)
+        self.layer_norm = LayerNorm(config.intra_word_encoder.hidden_size, config.intra_word_encoder.layer_norm_eps, elementwise_affine=True)
         self.classifier = torch.nn.Linear(config.intra_word_encoder.hidden_size, 1)
 
         intra_word_encoder_config = copy.copy(config.intra_word_encoder)
@@ -166,6 +166,12 @@ class CharToWord_LMMaskPredictionHead(torch.nn.Module):
         char_embeds = torch.cat([word_embeds, initial_embeds[:,1:,:]], dim=1)
         intra_word_output = self.intra_word_encoder(char_embeds, intra_word_mask, output_all_encoded_layers=False, return_att=False)
         hidden_states = intra_word_output['hidden_states'][-1]
+
+        if False:
+          ctx_states = hidden_states[:,0,:]
+          seq_states = self.layer_norm(ctx_states.unsqueeze(-2) + hidden_states)
+          seq_states = self.dense(seq_states)
+          seq_states = self.transform_act_fn(seq_states)
 
         logits = self.classifier(hidden_states)
         logits = logits.reshape(batch_size, num_word * num_char, -1)

@@ -14,10 +14,10 @@ class CharToWord_MaskedLanguageModel(NNModule):
   def __init__(self, config, *wargs, **kwargs):
     super().__init__(config)
     self.deberta = CharToWord_DeBERTa(config)
-    self.max_relative_positions = getattr(config, 'max_relative_positions', -1)
-    self.position_buckets = getattr(config, 'position_buckets', -1)
-    if self.max_relative_positions < 1:
-      self.max_relative_positions = config.max_position_embeddings
+    #self.max_relative_positions = getattr(config, 'max_relative_positions', -1)
+    #self.position_buckets = getattr(config, 'position_buckets', -1)
+    #if self.max_relative_positions < 1:
+    #  self.max_relative_positions = config.max_position_embeddings
     self.lm_predictions = CharToWord_LMPredictionHead(self.deberta.config)
     self.apply(self.init_weights)
 
