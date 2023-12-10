@@ -20,7 +20,7 @@ output_dir=$4
 train_file=$5
 validation_file=$6
 
-max_seq_length=512
+max_seq_length=256
 max_word_length=16
 vocab_type=spm_char
 data_dir="$output_dir/data"
@@ -34,7 +34,8 @@ python "$SCRIPT_DIR/prepare_data.py" \
 	--vocab_type $vocab_type \
 	--output_dir "$data_dir" \
 	--max_seq_length $max_seq_length \
-	--max_word_length $max_word_length
+	--max_word_length $max_word_length \
+	--char_to_word
 
 python -m DeBERTa.apps.run \
 	--model_config "$config"  \
@@ -48,7 +49,8 @@ python -m DeBERTa.apps.run \
 	--output_dir "$output_dir" \
 	--task_name "$task" \
 	--dataloader_buffer_size 5 \
-	--fp16 true \
 	--workers 1 \
-	--dump 200 \
+	--fp16 \
+	--dump 1000 \
+	--log_steps 250 \
 	--train_batch_size 4

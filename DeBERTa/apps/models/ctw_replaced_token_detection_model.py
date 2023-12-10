@@ -30,7 +30,7 @@ class CharToWord_ReplacedTokenDetectionModel(NNModule):
     encoder_output = self.deberta(input_ids, char_input_mask,
       word_input_mask, char_position_ids, word_position_ids,
       output_all_encoded_layers=False)
-    logits = self.mask_predictions(encoder_output)
+    logits = self.mask_predictions(encoder_output, self.deberta.intra_word_encoder.get_rel_embedding())
 
     #mask_loss = torch.tensor(0).to(logits).float()
     mask_logits = logits.view(-1)

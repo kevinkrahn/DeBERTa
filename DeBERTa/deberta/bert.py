@@ -129,7 +129,7 @@ class ConvLayer(nn.Module):
 class BertEncoder(nn.Module):
   """ Modified BertEncoder with relative position bias support
   """
-  def __init__(self, config):
+  def __init__(self, config, shared_rel_embeddings=False):
     super().__init__()
     #layer = BertLayer(config)
     self.layer = nn.ModuleList([BertLayer(config) for _ in range(config.num_hidden_layers)])
@@ -142,7 +142,8 @@ class BertEncoder(nn.Module):
       pos_ebd_size = self.max_relative_positions*2
       if self.position_buckets>0:
         pos_ebd_size = self.position_buckets*2
-      self.rel_embeddings = nn.Embedding(pos_ebd_size, config.hidden_size)
+      if not shared_rel_embeddings:
+        self.rel_embeddings = nn.Embedding(pos_ebd_size, config.hidden_size)
 
     self.norm_rel_ebd = [x.strip() for x in getattr(config, 'norm_rel_ebd', 'none').lower().split('|')]
     if 'layer_norm' in self.norm_rel_ebd:
@@ -176,7 +177,7 @@ class BertEncoder(nn.Module):
           max_position=self.max_relative_positions, device = hidden_states.device)
     return relative_pos
 
-  def forward(self, hidden_states, attention_mask, output_all_encoded_layers=True, return_att=False, query_states = None, relative_pos=None):
+  def forward(self, hidden_states, attention_mask, output_all_encoded_layers=True, return_att=False, query_states=None, relative_pos=None, relative_embeddings=None):
     if attention_mask.dim()<=2:
       input_mask = attention_mask
     else:
@@ -190,9 +191,9 @@ class BertEncoder(nn.Module):
       next_kv = hidden_states[0]
     else:
       next_kv = hidden_states
-    rel_embeddings = self.get_rel_embedding()
+    rel_embeddings = relative_embeddings if relative_embeddings is not None else self.get_rel_embedding()
     for i, layer_module in enumerate(self.layer):
-      output_states = layer_module(next_kv, attention_mask, return_att, query_states = query_states, relative_pos=relative_pos, rel_embeddings=rel_embeddings)
+      output_states = layer_module(next_kv, attention_mask, return_att, query_states=query_states, relative_pos=relative_pos, rel_embeddings=rel_embeddings)
       if return_att:
         output_states, att_m = output_states
 

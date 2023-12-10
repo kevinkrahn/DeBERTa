@@ -30,6 +30,7 @@ class CharToWord_DeBERTa(torch.nn.Module):
 
     self.config = config
     self.pre_trained = pre_trained
+    # TODO: Try sharing relative embeddings between intra and inter word encoders
     self.intra_word_encoder = BertEncoder(config.intra_word_encoder)
     self.inter_word_encoder = BertEncoder(config.inter_word_encoder)
     self.apply_state(state)
@@ -98,16 +99,15 @@ class CharToWord_LMPredictionHead(torch.nn.Module):
     def __init__(self, config):
         super().__init__()
         self.dense = torch.nn.Linear(config.intra_word_encoder.hidden_size, config.vocab_size)
-        self.transform_act_fn = ACT2FN[config.intra_word_encoder.hidden_act] if isinstance(config.intra_word_encoder.hidden_act, str) else config.intra_word_encoder.hidden_act
+        #self.transform_act_fn = ACT2FN[config.intra_word_encoder.hidden_act] if isinstance(config.intra_word_encoder.hidden_act, str) else config.intra_word_encoder.hidden_act
         #self.bias = torch.nn.Parameter(torch.zeros(config.vocab_size))
         #self.LayerNorm = LayerNorm(config.intra_word_encoder.hidden_size, config.intra_word_encoder.layer_norm_eps, elementwise_affine=True)
 
         intra_word_encoder_config = copy.copy(config.intra_word_encoder)
         intra_word_encoder_config.num_hidden_layers = 1
-        # TODO: Share relative embeddings with the main model
-        self.intra_word_encoder = BertEncoder(intra_word_encoder_config)
+        self.intra_word_encoder = BertEncoder(intra_word_encoder_config, shared_rel_embeddings=True)
 
-    def forward(self, deberta_output, label_index=None):
+    def forward(self, deberta_output, label_index=None, rel_embeddings=None):
         batch_size, num_word, num_char, hidden_size = deberta_output['input_shape']
         word_embeds = deberta_output['word_embeds']
         initial_word_embeds = deberta_output['initial_word_embeds']
@@ -120,7 +120,7 @@ class CharToWord_LMPredictionHead(torch.nn.Module):
         # concatenate to restore the character-level token sequence
         word_embeds = word_embeds.reshape(batch_size * num_word, 1, hidden_size)
         char_embeds = torch.cat([word_embeds, initial_embeds[:,1:,:]], dim=1)
-        intra_word_output = self.intra_word_encoder(char_embeds, intra_word_mask, output_all_encoded_layers=False, return_att=False)
+        intra_word_output = self.intra_word_encoder(char_embeds, intra_word_mask, output_all_encoded_layers=False, return_att=False, relative_embeddings=rel_embeddings)
         hidden_states = intra_word_output['hidden_states'][-1]
 
         if label_index is not None:
@@ -148,10 +148,9 @@ class CharToWord_LMMaskPredictionHead(torch.nn.Module):
 
         intra_word_encoder_config = copy.copy(config.intra_word_encoder)
         intra_word_encoder_config.num_hidden_layers = 1
-        # TODO: Share relative embeddings with the main model
-        self.intra_word_encoder = BertEncoder(intra_word_encoder_config)
+        self.intra_word_encoder = BertEncoder(intra_word_encoder_config, shared_rel_embeddings=True)
 
-    def forward(self, deberta_output):
+    def forward(self, deberta_output, rel_embeddings=None):
         batch_size, num_word, num_char, hidden_size = deberta_output['input_shape']
         word_embeds = deberta_output['word_embeds']
         initial_word_embeds = deberta_output['initial_word_embeds']
@@ -164,7 +163,7 @@ class CharToWord_LMMaskPredictionHead(torch.nn.Module):
         # concatenate to restore the character-level token sequence
         word_embeds = word_embeds.reshape(batch_size * num_word, 1, hidden_size)
         char_embeds = torch.cat([word_embeds, initial_embeds[:,1:,:]], dim=1)
-        intra_word_output = self.intra_word_encoder(char_embeds, intra_word_mask, output_all_encoded_layers=False, return_att=False)
+        intra_word_output = self.intra_word_encoder(char_embeds, intra_word_mask, output_all_encoded_layers=False, return_att=False, relative_embeddings=rel_embeddings)
         hidden_states = intra_word_output['hidden_states'][-1]
 
         if False:
