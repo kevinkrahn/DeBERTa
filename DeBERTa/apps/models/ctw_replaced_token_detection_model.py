@@ -32,7 +32,7 @@ class CharToWord_ReplacedTokenDetectionModel(NNModule):
       output_all_encoded_layers=False)
     logits = self.mask_predictions(encoder_output)
 
-    mask_loss = torch.tensor(0).to(logits).float()
+    #mask_loss = torch.tensor(0).to(logits).float()
     mask_logits = logits.view(-1)
     input_mask = char_input_mask.view(-1).to(mask_logits)
     input_idx = (input_mask > 0).nonzero().view(-1)

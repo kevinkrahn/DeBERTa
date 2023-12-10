@@ -100,7 +100,6 @@ class RTDModel(NNModule):
     lm_labels = input_data['labels']
     lm_loss = gen['loss']
     mask_index = (lm_labels.view(-1)>0).nonzero().view(-1)
-    gen_pred = torch.argmax(lm_logits, dim=1).detach().cpu().numpy()
     topk_labels, top_p = self.topk_sampling(lm_logits, topk=1, temp=temp)
     
     top_ids = torch.zeros_like(lm_labels.view(-1))

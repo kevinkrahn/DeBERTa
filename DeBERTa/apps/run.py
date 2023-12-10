@@ -374,6 +374,12 @@ def build_argument_parser():
               "Sequences longer than this will be truncated, and sequences shorter \n"
               "than this will be padded.")
 
+  parser.add_argument("--max_word_length",
+            default=20,
+            type=int,
+            help="(For CharToWord models only) The maximum number of chars per word.\n"
+              "Words shorter than this will be padded.")
+
   parser.add_argument("--do_train",
             default=False,
             action='store_true',

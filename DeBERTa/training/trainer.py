@@ -158,6 +158,7 @@ class DistributedTrainer:
 
   def save_model(self, args, checkpoint_dir, chk_postfix, model, optimizer):
     save_path= os.path.join(checkpoint_dir, f'pytorch.model-{chk_postfix}.bin')
+    logger.info(f'Saving model to {save_path}')
     if hasattr(model, 'module'):
       model_state = OrderedDict([(n,p) for n,p in model.module.state_dict().items()])
     else:

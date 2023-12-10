@@ -34,10 +34,9 @@ class CharToWord_MaskedLanguageModel(NNModule):
     encoder_output = self.deberta(input_ids, char_input_mask,
       word_input_mask, char_position_ids, word_position_ids,
       output_all_encoded_layers=False)
-    label_index = (lm_labels > 0).nonzero().reshape(-1)
-    lm_logits = self.lm_predictions(encoder_output, label_index)
-    #lm_logits = lm_logits.view(-1, lm_logits.size(-1))
     lm_labels = lm_labels.view(-1)
+    label_index = (lm_labels > 0).nonzero().view(-1)
+    lm_logits = self.lm_predictions(encoder_output, label_index)
     lm_labels = lm_labels.index_select(0, label_index)
     loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
     lm_loss = loss_fct(lm_logits, lm_labels)
