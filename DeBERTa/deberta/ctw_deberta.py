@@ -26,7 +26,7 @@ class CharToWord_DeBERTa(torch.nn.Module):
     self.char_embedding_dropout = StableDropout(config.intra_word_encoder.hidden_dropout_prob)
 
     #self.position_biased_input = getattr(config.intra_word_encoder, 'position_biased_input', True)
-    self.word_position_embeddings = torch.nn.Embedding(config.inter_word_encoder.max_position_embeddings, config.inter_word_encoder.hidden_size)
+    #self.word_position_embeddings = torch.nn.Embedding(config.inter_word_encoder.max_position_embeddings, config.inter_word_encoder.hidden_size)
 
     self.config = config
     self.pre_trained = pre_trained
@@ -103,6 +103,8 @@ class CharToWord_LMPredictionHead(torch.nn.Module):
         #self.bias = torch.nn.Parameter(torch.zeros(config.vocab_size))
         #self.LayerNorm = LayerNorm(config.intra_word_encoder.hidden_size, config.intra_word_encoder.layer_norm_eps, elementwise_affine=True)
 
+        self.residual_word_embedding = getattr(config, 'residual_word_embedding', True)
+
         intra_word_encoder_config = copy.copy(config.intra_word_encoder)
         intra_word_encoder_config.num_hidden_layers = 1
         self.intra_word_encoder = BertEncoder(intra_word_encoder_config, shared_rel_embeddings=True)
@@ -110,15 +112,17 @@ class CharToWord_LMPredictionHead(torch.nn.Module):
     def forward(self, deberta_output, label_index=None, rel_embeddings=None):
         batch_size, num_word, num_char, hidden_size = deberta_output['input_shape']
         word_embeds = deberta_output['word_embeds']
-        initial_word_embeds = deberta_output['initial_word_embeds']
         initial_embeds = deberta_output['initial_embeds']
         intra_word_mask = deberta_output['intra_word_mask']
 
-        # TODO: Add residual connection between initial word embeddings and contextual word embeddings
-        # as mentioned in the paper (In appendix, section A.3)
+        word_embeds = word_embeds.reshape(batch_size * num_word, 1, hidden_size)
+
+        if self.residual_word_embedding:
+          # residual connection between initial word embeddings and contextual word embeddings as mentioned in the paper (section A.3)
+          initial_word_embeds = deberta_output['initial_word_embeds']
+          word_embeds += initial_word_embeds.unsqueeze(1)
 
         # concatenate to restore the character-level token sequence
-        word_embeds = word_embeds.reshape(batch_size * num_word, 1, hidden_size)
         char_embeds = torch.cat([word_embeds, initial_embeds[:,1:,:]], dim=1)
         intra_word_output = self.intra_word_encoder(char_embeds, intra_word_mask, output_all_encoded_layers=False, return_att=False, relative_embeddings=rel_embeddings)
         hidden_states = intra_word_output['hidden_states'][-1]
@@ -146,6 +150,8 @@ class CharToWord_LMMaskPredictionHead(torch.nn.Module):
         self.layer_norm = LayerNorm(config.intra_word_encoder.hidden_size, config.intra_word_encoder.layer_norm_eps, elementwise_affine=True)
         self.classifier = torch.nn.Linear(config.intra_word_encoder.hidden_size, 1)
 
+        self.residual_word_embedding = getattr(config, 'residual_word_embedding', True)
+
         intra_word_encoder_config = copy.copy(config.intra_word_encoder)
         intra_word_encoder_config.num_hidden_layers = 1
         self.intra_word_encoder = BertEncoder(intra_word_encoder_config, shared_rel_embeddings=True)
@@ -153,24 +159,25 @@ class CharToWord_LMMaskPredictionHead(torch.nn.Module):
     def forward(self, deberta_output, rel_embeddings=None):
         batch_size, num_word, num_char, hidden_size = deberta_output['input_shape']
         word_embeds = deberta_output['word_embeds']
-        initial_word_embeds = deberta_output['initial_word_embeds']
         initial_embeds = deberta_output['initial_embeds']
         intra_word_mask = deberta_output['intra_word_mask']
 
-        # TODO: Add residual connection between initial word embeddings and contextual word embeddings
-        # as mentioned in the paper (In appendix, section A.3)
+        word_embeds = word_embeds.reshape(batch_size * num_word, 1, hidden_size)
+
+        if self.residual_word_embedding:
+          # residual connection between initial word embeddings and contextual word embeddings as mentioned in the paper (section A.3)
+          initial_word_embeds = deberta_output['initial_word_embeds']
+          word_embeds += initial_word_embeds.unsqueeze(1)
 
         # concatenate to restore the character-level token sequence
-        word_embeds = word_embeds.reshape(batch_size * num_word, 1, hidden_size)
         char_embeds = torch.cat([word_embeds, initial_embeds[:,1:,:]], dim=1)
         intra_word_output = self.intra_word_encoder(char_embeds, intra_word_mask, output_all_encoded_layers=False, return_att=False, relative_embeddings=rel_embeddings)
         hidden_states = intra_word_output['hidden_states'][-1]
 
-        if False:
-          ctx_states = hidden_states[:,0,:]
-          seq_states = self.layer_norm(ctx_states.unsqueeze(-2) + hidden_states)
-          seq_states = self.dense(seq_states)
-          seq_states = self.transform_act_fn(seq_states)
+        #ctx_states = hidden_states[:,0,:]
+        #seq_states = self.layer_norm(ctx_states.unsqueeze(-2) + hidden_states)
+        #seq_states = self.dense(seq_states)
+        #seq_states = self.transform_act_fn(seq_states)
 
         logits = self.classifier(hidden_states)
         logits = logits.reshape(batch_size, num_word * num_char, -1)
