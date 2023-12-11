@@ -58,7 +58,7 @@ class LMMaskPredictionHead(nn.Module):
       mask_loss_fn = torch.nn.BCEWithLogitsLoss(reduction='none')
       mask_logits = torch.gather(mask_logits, 0, input_idx).float()
       mask_loss = mask_loss_fn(mask_logits, mask_labels)
-    return logits, mask_labels, mask_loss
+    return mask_logits, mask_labels, mask_loss
 
 class ReplacedTokenDetectionModel(NNModule):
   """ RTD with DeBERTa

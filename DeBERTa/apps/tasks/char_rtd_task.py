@@ -2,6 +2,7 @@ from collections import OrderedDict,defaultdict
 import copy
 import numpy as np
 import os
+import sklearn.metrics
 
 import random
 import torch
@@ -25,8 +26,7 @@ logger = get_logger()
 __all__ = ["Char_RTDTask"]
 
 class RTDModel(NNModule):
-  def __init__(self, config, tokenizer=None, generator_class=MaskedLanguageModel,
-               discriminator_class=ReplacedTokenDetectionModel, *wargs, **kwargs):
+  def __init__(self, config, tokenizer=None, *wargs, **kwargs):
     super().__init__(config)
     gen_config = config.generator
     disc_config = config.discriminator
@@ -37,8 +37,8 @@ class RTDModel(NNModule):
     if tokenizer and disc_config.vocab_size != len(tokenizer.vocab):
       disc_config.vocab_size = len(tokenizer.vocab)
 
-    self.generator = generator_class(gen_config)
-    self.discriminator = discriminator_class(disc_config)
+    self.generator = MaskedLanguageModel(gen_config)
+    self.discriminator = ReplacedTokenDetectionModel(disc_config)
 
     self.generator._register_load_state_dict_pre_hook(self._pre_load_hook)
     self.discriminator._register_load_state_dict_pre_hook(self._pre_load_hook)
@@ -228,6 +228,7 @@ dataset_size=dataset_size, shuffle=True, **kwargs)
     return partial_class
 
   def get_train_fn(self, args, model):
+    self.rtd_model = model
     def train_fn(args, model, device, data_fn, eval_fn, loss_fn):
       if args.decoupled_training:
         gen_args = copy.deepcopy(args)
@@ -257,46 +258,76 @@ dataset_size=dataset_size, shuffle=True, **kwargs)
         batch_sampler = DistributedBatchSampler(batch_sampler, rank=args.rank, world_size=args.world_size)
         eval_dataloader = DataLoader(eval_item.data, batch_sampler=batch_sampler, num_workers=args.workers)
         model.eval()
-        eval_loss, eval_accuracy = 0, 0
+        mlm_eval_loss = 0
+        rtd_eval_loss = 0
+        mlm_predicts = []
+        mlm_labels = []
+        rtd_predicts = []
+        rtd_labels = []
         nb_eval_steps, nb_eval_examples = 0, 0
-        predicts=[]
-        labels=[]
         for batch in tqdm(AsyncDataLoader(eval_dataloader), ncols=80, desc='Evaluating: {}'.format(prefix), disable=no_tqdm):
           batch = batch_to(batch, device)
           with torch.no_grad():
-            output = model(**batch)
-          logits = output['logits'].detach().argmax(dim=-1)
-          tmp_eval_loss = output['loss'].detach()
-          if 'labels' in output:
-            label_ids = output['labels'].detach().to(device)
+            #output = model(**batch)
+            new_data, _, gen_output = self.rtd_model.make_electra_data(batch)
+            dis_output = self.rtd_model.discriminator_fw(**new_data)
+
+          # MLM stats
+          if 'labels' in gen_output:
+            label_ids = gen_output['labels'].detach().to(device)
           else:
             label_ids = batch['labels'].to(device)
-          predicts.append(logits)
-          labels.append(label_ids)
-          eval_loss += tmp_eval_loss.mean()
+          mlm_labels.append(label_ids)
+          logits = gen_output['logits'].detach().argmax(dim=-1)
+          mlm_predicts.append(logits)
+          mlm_eval_loss += gen_output['loss'].detach().mean()
+
+          # RTD stats
+          rtd_predicts.append((dis_output['logits'].detach() > 0.5).int())
+          rtd_labels.append(dis_output['labels'].to(device))
+          rtd_eval_loss += dis_output['loss'].detach().mean()
+
           input_ids = batch['input_ids']
           nb_eval_examples += input_ids.size(0)
           nb_eval_steps += 1
     
-        eval_loss = eval_loss / nb_eval_steps
-        predicts = merge_distributed(predicts)
-        labels = merge_distributed(labels)
+        mlm_eval_loss = mlm_eval_loss / nb_eval_steps
+        mlm_predicts = merge_distributed(mlm_predicts)
+        mlm_labels = merge_distributed(mlm_labels)
 
-        result=OrderedDict()
-        metrics_fn = eval_item.metrics_fn
-        metrics = metrics_fn(predicts.numpy(), labels.numpy())
-        result.update(metrics)
-        result['perplexity'] = torch.exp(eval_loss).item()
+        rtd_eval_loss = rtd_eval_loss / nb_eval_steps
+        rtd_predicts = merge_distributed(rtd_predicts)
+        rtd_labels = merge_distributed(rtd_labels)
+
+        mlm_results = OrderedDict()
+        metrics = eval_item.metrics_fn(mlm_predicts.numpy(), mlm_labels.numpy())
+        mlm_results.update(metrics)
+        mlm_results['perplexity'] = torch.exp(mlm_eval_loss).item()
         critial_metrics = set(metrics.keys()) if eval_item.critial_metrics is None or len(eval_item.critial_metrics)==0 else eval_item.critial_metrics
         eval_metric = np.mean([v for k,v in metrics.items() if  k in critial_metrics])
-        result['eval_loss'] = eval_loss.item()
-        result['eval_metric'] = eval_metric
-        result['eval_samples'] = len(labels)
-        if args.rank<=0:
-          logger.info("***** Eval results-{}-{} *****".format(name, prefix))
-          for key in sorted(result.keys()):
-            logger.info("  %s = %s", key, str(result[key]))
-        eval_results[name]=(eval_metric, predicts, labels)
+        mlm_results['eval_loss'] = mlm_eval_loss.item()
+        mlm_results['eval_metric'] = eval_metric
+        mlm_results['eval_samples'] = len(mlm_labels)
+
+        rtd_results = OrderedDict()
+        rtd_acc = (rtd_predicts == rtd_labels).sum() / len(rtd_labels)
+        rtd_f1 = sklearn.metrics.f1_score(rtd_labels, rtd_predicts)
+        #rtd_results['perplexity'] = torch.exp(rtd_eval_loss).item()
+        rtd_results['eval_loss'] = rtd_eval_loss.item()
+        rtd_results['rtd_accuracy'] = rtd_acc.item()
+        rtd_results['rtd_f1'] = rtd_f1
+        rtd_results['eval_samples'] = len(rtd_labels)
+
+        if args.rank <= 0:
+          logger.info("***** Generator (MLM) Eval results-{}-{} *****".format(name, prefix))
+          for key in sorted(mlm_results.keys()):
+            logger.info("  %s = %s", key, str(mlm_results[key]))
+
+          logger.info("***** Discriminator (MLM) Eval results-{}-{} *****".format(name, prefix))
+          for key in sorted(rtd_results.keys()):
+            logger.info("  %s = %s", key, str(rtd_results[key]))
+
+        eval_results[name] = (eval_metric, mlm_predicts, mlm_labels)
 
       return eval_results
     return eval_fn
@@ -335,6 +366,8 @@ dataset_size=dataset_size, shuffle=True, **kwargs)
       for k in new_data:
         new_data[k] = torch.cat(new_data[k], dim=0)
       disc_trainer._train_step(new_data, 1)
+      if disc_trainer.trainer_state.steps % self.args.log_steps == 0:
+        disc_trainer.trainer_state.report_state()
   
     def g_loss_fn(trainer, _model, data):
       new_data, mlm_loss, gen_output = model.make_electra_data(data, rand=rand)
