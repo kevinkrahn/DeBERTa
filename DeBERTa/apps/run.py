@@ -280,7 +280,8 @@ def main(args):
   torch.manual_seed(args.seed)
 
   vocab_path, vocab_type = load_vocab(vocab_path = args.vocab_path, vocab_type = args.vocab_type, pretrained_id = args.init_model)
-  tokenizer = tokenizers[vocab_type](vocab_path)
+  extra_tokens = [] if args.token_format == 'subword' else ['[WORD_CLS]']
+  tokenizer = tokenizers[vocab_type](vocab_path, special_tokens=extra_tokens)
   task = get_task(args.task_name)(tokenizer = tokenizer, args=args, max_seq_len = args.max_seq_length, data_dir = args.data_dir)
   label_list = task.get_labels()
 
@@ -446,7 +447,7 @@ def build_argument_parser():
   parser.add_argument('--vocab_type',
             default='gpt2',
             type=str,
-            help="Vocabulary type: [spm, gpt2]")
+            help=f"Vocabulary type: [{', '.join(tokenizers.keys())}]")
 
   parser.add_argument('--vocab_path',
             default=None,
@@ -477,6 +478,11 @@ def build_argument_parser():
             default=False,
             type=boolean_string,
             help="Whether to export model to ONNX format.")
+
+  parser.add_argument('--token_format',
+            default='subword',
+            type=str,
+            help="The format of the input data: [subword, char, char_to_word]. Affects masking logic and placement of special tokens.")
 
   return parser
 

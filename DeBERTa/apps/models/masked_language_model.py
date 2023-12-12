@@ -8,20 +8,8 @@
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
-from concurrent.futures import ThreadPoolExecutor
 
-import csv
-import os
-import json
-import random
-import time
-from tqdm import tqdm, trange
-
-import numpy as np
 import torch
-import torch.nn as nn
-import pdb
-from collections.abc import Mapping
 from copy import copy
 from ...deberta import *
 
@@ -38,7 +26,6 @@ class EnhancedMaskDecoder(torch.nn.Module):
     mlm_ctx_layers = self.emd_context_layer(ctx_layers, z_states, attention_mask, encoder, target_ids, input_ids, input_mask, relative_pos=relative_pos)
     loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
     lm_loss = torch.tensor(0).to(ctx_layers[-1])
-    arlm_loss = torch.tensor(0).to(ctx_layers[-1])
     ctx_layer = mlm_ctx_layers[-1]
     lm_logits = self.lm_head(ctx_layer, ebd_weight).float()
     lm_logits = lm_logits.view(-1, lm_logits.size(-1))
@@ -55,7 +42,6 @@ class EnhancedMaskDecoder(torch.nn.Module):
       attention_mask = att_mask*att_mask.squeeze(-2).unsqueeze(-1)
     elif attention_mask.dim()==3:
       attention_mask = attention_mask.unsqueeze(1)
-    target_mask = target_ids>0
     hidden_states = encoder_layers[-2]
     if not self.position_biased_input: 
       layers = [encoder.layer[-1] for _ in range(2)]
@@ -112,17 +98,14 @@ class MaskedLanguageModel(NNModule):
     ctx_layer = encoder_layers[-1]
     lm_loss = torch.tensor(0).to(ctx_layer).float()
     lm_logits = None
-    label_inputs = None
     if lm_labels is not None:
       ebd_weight = self.deberta.embeddings.word_embeddings.weight
-
       label_index = (lm_labels.view(-1) > 0).nonzero()
-      label_inputs = torch.gather(input_ids.view(-1), 0, label_index.view(-1))
-      if label_index.size(0)>0:
+      if label_index.size(0) > 0:
         (lm_logits, lm_labels, lm_loss) = self.lm_predictions(encoder_layers, ebd_weight, lm_labels, input_ids, input_mask, z_states, attention_mask, self.deberta.encoder)
 
     return {
-            'logits' : lm_logits,
-            'labels' : lm_labels,
-            'loss' : lm_loss.float(),
-          }
+      'logits' : lm_logits,
+      'labels' : lm_labels,
+      'loss' : lm_loss.float(),
+    }

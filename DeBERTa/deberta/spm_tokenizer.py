@@ -13,7 +13,6 @@ import six
 import unicodedata
 import os
 import regex as re
-from .cache_utils import load_vocab
 from ..utils import get_logger
 logger=get_logger()
 
@@ -23,27 +22,22 @@ import pdb
 __all__ = ['SPMTokenizer']
 
 class SPMTokenizer:
-  def __init__(self, vocab_file, do_lower_case=False, special_tokens=None, bpe_dropout=0, split_by_punct=False):
+  def __init__(self, vocab_file, do_lower_case=False, special_tokens=[], bpe_dropout=0, split_by_punct=False):
+    assert os.path.exists(vocab_file)
+
     self.split_by_punct = split_by_punct
     spm = sp.SentencePieceProcessor()
-    assert os.path.exists(vocab_file)
     spm.load(vocab_file)
-    bpe_vocab_size = spm.GetPieceSize()
+    vocab_size = spm.GetPieceSize()
     # Token map
     # <unk> 0+1
     # <s> 1+1
     # </s> 2+1
-    self.vocab = {spm.IdToPiece(i):i for i in range(bpe_vocab_size)}
-    self.id_to_tokens = [spm.IdToPiece(i) for i in range(bpe_vocab_size)]
-    #self.vocab['[PAD]'] = 0
-    #self.vocab['[CLS]'] = 1
-    #self.vocab['[SEP]'] = 2
-    #self.vocab['[UNK]'] = 3
+    self.vocab = {spm.IdToPiece(i):i for i in range(vocab_size)}
+    self.id_to_tokens = [spm.IdToPiece(i) for i in range(vocab_size)]
 
-    _special_tokens = ['[MASK]', '[SEP]', '[PAD]', '[UNK]', '[CLS]']
+    _special_tokens = ['[MASK]', '[SEP]', '[PAD]', '[UNK]', '[CLS]', *special_tokens]
     self.special_tokens = []
-    if special_tokens is not None:
-      _special_tokens.extend(special_tokens)
     for t in _special_tokens:
       self.add_special_token(t)
 
