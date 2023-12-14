@@ -91,19 +91,30 @@ class CharToWord_DeBERTa(torch.nn.Module):
     missing_keys = []
     unexpected_keys = []
     error_msgs = []
-    self._load_from_state_dict(state, prefix = prefix, local_metadata=None, strict=True, missing_keys=missing_keys, unexpected_keys=unexpected_keys, error_msgs=error_msgs)
+    self._load_from_state_dict(state, prefix=prefix, local_metadata=None, strict=True, missing_keys=missing_keys, unexpected_keys=unexpected_keys, error_msgs=error_msgs)
 
 
 class CharToWord_LMPredictionHead(torch.nn.Module):
     """ Prediction head used for masked language modeling. """
-    def __init__(self, config):
+    def __init__(self, config, input_embeddings=None):
         super().__init__()
-        self.dense = torch.nn.Linear(config.intra_word_encoder.hidden_size, config.vocab_size)
+        if getattr(config, "tie_word_embeddings", True):
+          if input_embeddings is None:
+            raise ValueError("input_embeddings must be provided if tie_word_embeddings is True")
+
+          self.decoder = torch.nn.Linear(config.intra_word_encoder.hidden_size, config.vocab_size, bias=False)
+          self.bias = torch.nn.Parameter(torch.zeros(config.vocab_size))
+          self.decoder.bias = self.bias
+          self.decoder.weight = input_embeddings.weight
+          self.decoder.bias.data = torch.nn.functional.pad(self.decoder.bias.data, (0, self.decoder.weight.shape[0] - self.decoder.bias.shape[0]), 'constant', 0)
+        else:
+          self.decoder = torch.nn.Linear(config.intra_word_encoder.hidden_size, config.vocab_size)
+
         #self.transform_act_fn = ACT2FN[config.intra_word_encoder.hidden_act] if isinstance(config.intra_word_encoder.hidden_act, str) else config.intra_word_encoder.hidden_act
         #self.bias = torch.nn.Parameter(torch.zeros(config.vocab_size))
         #self.LayerNorm = LayerNorm(config.intra_word_encoder.hidden_size, config.intra_word_encoder.layer_norm_eps, elementwise_affine=True)
 
-        self.residual_word_embedding = getattr(config, 'residual_word_embedding', True)
+        self.residual_word_embedding = getattr(config, 'residual_word_embedding', False)
 
         intra_word_encoder_config = copy.copy(config.intra_word_encoder)
         intra_word_encoder_config.num_hidden_layers = 1
@@ -132,7 +143,7 @@ class CharToWord_LMPredictionHead(torch.nn.Module):
           hidden_states = hidden_states.index_select(0, label_index)
 
         # TODO: Experiment with tied weights (like in regular BERT)
-        char_logits = self.dense(hidden_states)
+        char_logits = self.decoder(hidden_states)
         #char_logits = self.transform_act_fn(char_logits)
 
         if label_index is None:
@@ -150,7 +161,7 @@ class CharToWord_LMMaskPredictionHead(torch.nn.Module):
         self.layer_norm = LayerNorm(config.intra_word_encoder.hidden_size, config.intra_word_encoder.layer_norm_eps, elementwise_affine=True)
         self.classifier = torch.nn.Linear(config.intra_word_encoder.hidden_size, 1)
 
-        self.residual_word_embedding = getattr(config, 'residual_word_embedding', True)
+        self.residual_word_embedding = getattr(config, 'residual_word_embedding', False)
 
         intra_word_encoder_config = copy.copy(config.intra_word_encoder)
         intra_word_encoder_config.num_hidden_layers = 1

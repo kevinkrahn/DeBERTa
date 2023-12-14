@@ -14,7 +14,7 @@ class CharToWord_MaskedLanguageModel(NNModule):
   def __init__(self, config, *wargs, **kwargs):
     super().__init__(config)
     self.deberta = CharToWord_DeBERTa(config)
-    self.lm_predictions = CharToWord_LMPredictionHead(self.deberta.config)
+    self.lm_predictions = CharToWord_LMPredictionHead(self.deberta.config, self.deberta.char_embeddings)
     self.apply(self.init_weights)
 
   def forward(self, input_ids, char_input_mask, word_input_mask, char_position_ids=None, word_position_ids=None, labels=None):

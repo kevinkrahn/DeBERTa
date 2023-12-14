@@ -23,6 +23,7 @@
 		"vocab_size": -1
 	},
 	"generator":{
+		"tie_word_embeddings": true,
 		"attention_probs_dropout_prob": 0.1,
 		"hidden_act": "gelu",
 		"hidden_dropout_prob": 0.1,

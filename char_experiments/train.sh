@@ -10,8 +10,8 @@ cd "$ROOT_DIR"
 
 if [ $# -lt 4 ]; then
 	echo "Usage: $0 <task> <token_format> <config_path> <vocab_path> <output_dir> <train_file> <validation_file>"
-	echo "       Task: MLM, RTD"
-	echo "       Token format: subword, char, char_to_word"
+	echo "       task: MLM, RTD"
+	echo "       token_format: subword, char, char_to_word"
 	exit 0
 fi
 
@@ -51,10 +51,10 @@ python -m DeBERTa.apps.run \
 	--vocab_type $vocab_type \
 	--output_dir "$output_dir" \
 	--token_format "$token_format" \
-	--num_train_epochs 1 \
+	--num_train_epochs 10 \
 	--learning_rate 1e-4 \
-	--train_batch_size 2 \
-	--dataloader_buffer_size 5 \
+	--train_batch_size 6 \
+	--dataloader_buffer_size 30 \
 	--workers 1 \
 	--fp16 true \
 	--dump 1000 \
