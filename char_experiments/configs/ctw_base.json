@@ -1,4 +1,5 @@
 {
+	"model_type": "ctw_deberta",
 	"initializer_range": 0.02,
 	"vocab_size": -1,
 	"residual_word_embedding": false,

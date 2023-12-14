@@ -1,6 +1,7 @@
 {
 	"embedding_sharing": "gdes",
 	"discriminator": {
+		"model_type": "deberta-v2",
 		"attention_probs_dropout_prob": 0.1,
 		"hidden_act": "gelu",
 		"hidden_dropout_prob": 0.1,
@@ -23,6 +24,7 @@
 		"vocab_size": -1
 	},
 	"generator":{
+		"model_type": "deberta-v2",
 		"tie_word_embeddings": true,
 		"attention_probs_dropout_prob": 0.1,
 		"hidden_act": "gelu",

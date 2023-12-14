@@ -270,7 +270,7 @@ class BertEmbeddings(nn.Module):
         'position_embeddings': position_embeddings}
 
 class BertLMPredictionHead(nn.Module):
-    def __init__(self, config, vocab_size):
+    def __init__(self, config, input_embeddings=None):
         super().__init__()
         self.embedding_size = getattr(config, 'embedding_size', config.hidden_size)
         self.dense = nn.Linear(config.hidden_size, self.embedding_size)
@@ -279,14 +279,24 @@ class BertLMPredictionHead(nn.Module):
 
         self.LayerNorm = LayerNorm(self.embedding_size, config.layer_norm_eps, elementwise_affine=True)
 
-        self.bias = nn.Parameter(torch.zeros(vocab_size))
+        self.decoder = nn.Linear(self.embedding_size, config.vocab_size, bias=False)
+        self.bias = nn.Parameter(torch.zeros(config.vocab_size))
+        self.decoder.bias = self.bias
+        #self.decoder.bias.data = torch.nn.functional.pad(self.decoder.bias.data, (0, self.decoder.weight.shape[0] - self.decoder.bias.shape[0]), 'constant', 0)
 
-    def forward(self, hidden_states, embeding_weight):
+        if getattr(config, "tie_word_embeddings", True):
+          if input_embeddings is None:
+            raise ValueError("input_embeddings must be provided if tie_word_embeddings is True")
+          self.decoder.weight = input_embeddings.weight
+
+    def forward(self, hidden_states):
         hidden_states = self.dense(hidden_states)
         hidden_states = self.transform_act_fn(hidden_states)
         # b x s x d
         hidden_states = MaskedLayerNorm(self.LayerNorm, hidden_states)
 
         # b x s x v
-        logits = torch.matmul(hidden_states, embeding_weight.t().to(hidden_states)) + self.bias
+        #logits = torch.matmul(hidden_states, embeding_weight.t().to(hidden_states)) + self.bias
+        logits = self.decoder(hidden_states)
+
         return logits

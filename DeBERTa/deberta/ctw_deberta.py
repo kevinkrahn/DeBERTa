@@ -106,7 +106,7 @@ class CharToWord_LMPredictionHead(torch.nn.Module):
           self.bias = torch.nn.Parameter(torch.zeros(config.vocab_size))
           self.decoder.bias = self.bias
           self.decoder.weight = input_embeddings.weight
-          self.decoder.bias.data = torch.nn.functional.pad(self.decoder.bias.data, (0, self.decoder.weight.shape[0] - self.decoder.bias.shape[0]), 'constant', 0)
+          #self.decoder.bias.data = torch.nn.functional.pad(self.decoder.bias.data, (0, self.decoder.weight.shape[0] - self.decoder.bias.shape[0]), 'constant', 0)
         else:
           self.decoder = torch.nn.Linear(config.intra_word_encoder.hidden_size, config.vocab_size)
 

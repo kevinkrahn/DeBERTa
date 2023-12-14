@@ -74,18 +74,4 @@ class ModelConfig(AbsModelConfig):
         """Constructs ModelConfig.
 
         """
-        
-        # TODO: these values are superfluous for RTD and CharToWord models
-        self.hidden_size = 768
-        self.num_hidden_layers = 12
-        self.num_attention_heads = 12
-        self.hidden_act = "gelu"
-        self.intermediate_size = 3072
-        self.hidden_dropout_prob = 0.1
-        self.attention_probs_dropout_prob = 0.1
-        self.max_position_embeddings = 512
-        self.type_vocab_size = 0
-        self.initializer_range = 0.02
-        self.layer_norm_eps = 1e-7
-        self.padding_idx = 0
-        self.vocab_size = -1
+        pass

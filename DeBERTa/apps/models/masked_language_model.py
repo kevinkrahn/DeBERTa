@@ -10,24 +10,23 @@ from __future__ import division
 from __future__ import print_function
 
 import torch
-from copy import copy
 from ...deberta import *
 
 __all__ = ['MaskedLanguageModel']
 
 class EnhancedMaskDecoder(torch.nn.Module):
-  def __init__(self, config, vocab_size):
+  def __init__(self, config, input_embeddings):
     super().__init__()
     self.config = config
     self.position_biased_input = getattr(config, 'position_biased_input', True)
-    self.lm_head = BertLMPredictionHead(config, vocab_size)
+    self.predictions = BertLMPredictionHead(config, input_embeddings)
 
-  def forward(self, ctx_layers, ebd_weight, target_ids, input_ids, input_mask, z_states, attention_mask, encoder, relative_pos=None):
+  def forward(self, ctx_layers, target_ids, input_ids, input_mask, z_states, attention_mask, encoder, relative_pos=None):
     mlm_ctx_layers = self.emd_context_layer(ctx_layers, z_states, attention_mask, encoder, target_ids, input_ids, input_mask, relative_pos=relative_pos)
     loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
     lm_loss = torch.tensor(0).to(ctx_layers[-1])
     ctx_layer = mlm_ctx_layers[-1]
-    lm_logits = self.lm_head(ctx_layer, ebd_weight).float()
+    lm_logits = self.predictions(ctx_layer).float()
     lm_logits = lm_logits.view(-1, lm_logits.size(-1))
     lm_labels = target_ids.view(-1)
     label_index = (target_ids.view(-1)>0).nonzero().view(-1)
@@ -73,12 +72,8 @@ class MaskedLanguageModel(NNModule):
   def __init__(self, config, *wargs, **kwargs):
     super().__init__(config)
     self.deberta = DeBERTa(config)
-
-    self.max_relative_positions = getattr(config, 'max_relative_positions', -1)
-    self.position_buckets = getattr(config, 'position_buckets', -1)
-    if self.max_relative_positions <1:
-      self.max_relative_positions = config.max_position_embeddings
-    self.lm_predictions = EnhancedMaskDecoder(self.deberta.config, self.deberta.embeddings.word_embeddings.weight.size(0))
+    # renamed lm_predictions -> cls so the LM head weights can be loaded with HuggingFace transformers
+    self.cls = EnhancedMaskDecoder(self.deberta.config, self.deberta.embeddings.word_embeddings)
     self.apply(self.init_weights)
 
   def forward(self, input_ids, input_mask=None, labels=None, position_ids=None, attention_mask=None):
@@ -99,10 +94,9 @@ class MaskedLanguageModel(NNModule):
     lm_loss = torch.tensor(0).to(ctx_layer).float()
     lm_logits = None
     if lm_labels is not None:
-      ebd_weight = self.deberta.embeddings.word_embeddings.weight
       label_index = (lm_labels.view(-1) > 0).nonzero()
       if label_index.size(0) > 0:
-        (lm_logits, lm_labels, lm_loss) = self.lm_predictions(encoder_layers, ebd_weight, lm_labels, input_ids, input_mask, z_states, attention_mask, self.deberta.encoder)
+        (lm_logits, lm_labels, lm_loss) = self.cls(encoder_layers, lm_labels, input_ids, input_mask, z_states, attention_mask, self.deberta.encoder)
 
     return {
       'logits' : lm_logits,

@@ -13,8 +13,8 @@ class CharToWord_MaskedLanguageModel(NNModule):
   """
   def __init__(self, config, *wargs, **kwargs):
     super().__init__(config)
-    self.deberta = CharToWord_DeBERTa(config)
-    self.lm_predictions = CharToWord_LMPredictionHead(self.deberta.config, self.deberta.char_embeddings)
+    self.ctw_deberta = CharToWord_DeBERTa(config)
+    self.cls = CharToWord_LMPredictionHead(self.ctw_deberta.config, self.ctw_deberta.char_embeddings)
     self.apply(self.init_weights)
 
   def forward(self, input_ids, char_input_mask, word_input_mask, char_position_ids=None, word_position_ids=None, labels=None):
@@ -27,12 +27,12 @@ class CharToWord_MaskedLanguageModel(NNModule):
     if word_position_ids is not None:
       word_position_ids = word_position_ids.to(device)
 
-    encoder_output = self.deberta(input_ids, char_input_mask,
+    encoder_output = self.ctw_deberta(input_ids, char_input_mask,
       word_input_mask, char_position_ids, word_position_ids,
       output_all_encoded_layers=False)
     lm_labels = lm_labels.view(-1)
     label_index = (lm_labels > 0).nonzero().view(-1)
-    lm_logits = self.lm_predictions(encoder_output, label_index, self.deberta.intra_word_encoder.get_rel_embedding())
+    lm_logits = self.cls(encoder_output, label_index, self.ctw_deberta.intra_word_encoder.get_rel_embedding())
     lm_labels = lm_labels.index_select(0, label_index)
     loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
     lm_loss = loss_fct(lm_logits, lm_labels)
