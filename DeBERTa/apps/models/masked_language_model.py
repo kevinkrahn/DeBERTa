@@ -76,8 +76,7 @@ class MaskedLanguageModel(NNModule):
       config.vocab_size = len(tokenizer.vocab)
 
     self.deberta = DeBERTa(config)
-    # renamed lm_predictions -> cls so the LM head weights can be loaded with HuggingFace transformers
-    self.cls = EnhancedMaskDecoder(self.deberta.config, self.deberta.embeddings.word_embeddings)
+    self.lm_predictions = EnhancedMaskDecoder(self.deberta.config, self.deberta.embeddings.word_embeddings)
     self.apply(self.init_weights)
 
   def forward(self, input_ids, input_mask=None, labels=None, position_ids=None, attention_mask=None):
@@ -100,7 +99,7 @@ class MaskedLanguageModel(NNModule):
     if lm_labels is not None:
       label_index = (lm_labels.view(-1) > 0).nonzero()
       if label_index.size(0) > 0:
-        (lm_logits, lm_labels, lm_loss) = self.cls(encoder_layers, lm_labels, input_ids, input_mask, z_states, attention_mask, self.deberta.encoder)
+        (lm_logits, lm_labels, lm_loss) = self.lm_predictions(encoder_layers, lm_labels, input_ids, input_mask, z_states, attention_mask, self.deberta.encoder)
 
     return {
       'logits' : lm_logits,
