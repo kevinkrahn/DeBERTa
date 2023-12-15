@@ -15,7 +15,7 @@ from ...data import DynamicDataset
 from ...utils import get_logger,boolean_string
 from ...training import DistributedTrainer, batch_to
 from ...data import DistributedBatchSampler, SequentialSampler, BatchSampler, AsyncDataLoader
-from .mlm_task import NGramMaskGenerator, example_to_feature
+from .mlm_task import NGramMaskGenerator, example_to_feature, collate_examples
 from .._utils import merge_distributed
 
 logger = get_logger()
@@ -76,6 +76,11 @@ class RTDTask(Task):
         rng=rng, mask_generator=mask_gen, ext_params=ext_params, **kwargs)
     return _example_to_feature
 
+  def get_collate_fn(self):
+    def collate_fn(batch):
+      return collate_examples(batch, self.tokenizer, self.args)
+    return collate_fn
+
   def get_model_class_fn(self):
     def partial_class(*wargs, **kwargs):
       if self.args.token_format == 'char_to_word':
@@ -132,7 +137,12 @@ class RTDTask(Task):
         eval_sampler = SequentialSampler(len(eval_item.data))
         batch_sampler = BatchSampler(eval_sampler, args.eval_batch_size)
         batch_sampler = DistributedBatchSampler(batch_sampler, rank=args.rank, world_size=args.world_size)
-        eval_dataloader = DataLoader(eval_item.data, batch_sampler=batch_sampler, num_workers=args.workers)
+        eval_dataloader = DataLoader(
+          eval_item.data,
+          batch_sampler=batch_sampler,
+          num_workers=args.workers,
+          collate_fn=self.get_collate_fn(),
+        )
         model.eval()
         mlm_eval_loss = 0
         rtd_eval_loss = 0

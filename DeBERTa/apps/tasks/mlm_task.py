@@ -21,7 +21,7 @@ logger = get_logger()
 
 __all__ = ["MLMTask"]
 
-def example_to_feature(tokenizer, example, args, rng=None, mask_generator=None, ext_params=None, **kwargs):
+def example_to_feature(tokenizer, example, args, rng=None, mask_generator=None, ext_params=None, pad=False, **kwargs):
   if not rng:
     rng = random
   if args.token_format == 'char_to_word':
@@ -48,35 +48,58 @@ def example_to_feature(tokenizer, example, args, rng=None, mask_generator=None, 
       else:
         last_word.append(token)
 
-    num_pad_words = args.max_seq_length - num_words
-    input_tokens.extend(['[PAD]']*max_word_chars*num_pad_words)
-    char_position_ids.extend([0]*max_word_chars*num_pad_words)
-    char_input_mask.extend([0]*max_word_chars*num_pad_words)
-    word_input_mask = [1]*num_words + [0]*num_pad_words
-    word_position_ids = [*range(num_words)] + [0]*num_pad_words
+    assert(num_words <= args.max_seq_length)
 
     if mask_generator:
-      tokens, labels = mask_generator.mask_tokens(input_tokens, rng)
-      token_ids = tokenizer.convert_tokens_to_ids(tokens)
+      input_tokens, labels = mask_generator.mask_tokens(input_tokens, rng)
+    token_ids = tokenizer.convert_tokens_to_ids(input_tokens)
 
     features = OrderedDict(
-      input_ids=torch.tensor(token_ids, dtype=torch.long).reshape(args.max_seq_length, max_word_chars),
-      char_input_mask=torch.tensor(char_input_mask, dtype=torch.long).reshape(args.max_seq_length, max_word_chars),
-      word_input_mask=torch.tensor(word_input_mask, dtype=torch.long),
-      char_position_ids=torch.tensor(char_position_ids, dtype=torch.long).reshape(args.max_seq_length, max_word_chars),
-      word_position_ids=torch.tensor(word_position_ids, dtype=torch.long),
-      labels=torch.tensor(labels, dtype=torch.long))
+      input_ids=token_ids,
+      char_input_mask=char_input_mask,
+      char_position_ids=char_position_ids,
+      labels=labels,
+    )
   else:
     assert(len(example) < args.max_seq_length-2)
+
     _tokens = ['[CLS]', *example, '[SEP]']
     if mask_generator:
-      tokens, lm_labels = mask_generator.mask_tokens(_tokens, rng)
+      tokens, labels = mask_generator.mask_tokens(_tokens, rng)
     token_ids = tokenizer.convert_tokens_to_ids(tokens)
-    features = OrderedDict(input_ids=token_ids, position_ids=list(range(len(token_ids))), input_mask=[1]*len(token_ids), labels=lm_labels)
-    for f in features:
-      features[f] = torch.tensor(features[f] + [0]*(args.max_seq_length - len(token_ids)), dtype=torch.int)
+    features = OrderedDict(
+      input_ids=token_ids,
+      position_ids=list(range(len(token_ids))),
+      input_mask=[1]*len(token_ids),
+      labels=labels,
+    )
     
   return features
+
+
+def collate_examples(batch, tokenizer, args):
+  elem = batch[0]
+  elem_type = type(elem)
+  if args.token_format == 'char_to_word':
+    max_words = max([len(x['input_ids']) // args.max_word_length for x in batch])
+    f = { key: [] for key in elem }
+    f['word_input_mask'] = []
+    f['word_position_ids'] = []
+    for e in batch:
+      num_words = len(e['input_ids']) // args.max_word_length
+      num_pad_words = max_words - num_words
+      ids = torch.tensor(e['input_ids'] + [0]*args.max_word_length*num_pad_words, dtype=torch.long)
+      f['input_ids'].append(ids.reshape(max_words, args.max_word_length))
+      f['char_input_mask'].append(torch.tensor(e['char_input_mask'] + [0]*args.max_word_length*num_pad_words, dtype=torch.long).reshape(max_words, args.max_word_length))
+      f['char_position_ids'].append(torch.tensor(e['char_position_ids'] + [0]*args.max_word_length*num_pad_words, dtype=torch.long).reshape(max_words, args.max_word_length))
+      f['labels'].append(torch.tensor(e['labels'] + [0]*args.max_word_length*num_pad_words, dtype=torch.long))
+      f['word_input_mask'].append(torch.tensor([1]*num_words + [0]*num_pad_words))
+      f['word_position_ids'].append(torch.tensor([*range(num_words)] + [0]*num_pad_words))
+    return elem_type({key: torch.stack(f[key]) for key in f})
+  else:
+    #max_length = args.max_seq_length
+    max_length = max([len(x['input_ids']) for x in batch])
+    return elem_type({key: torch.tensor([d[key] + [0]*(max_length-len(d[key])) for d in batch], dtype=torch.long) for key in elem})
 
 
 class NGramMaskGenerator:
@@ -235,6 +258,11 @@ class MLMTask(Task):
         rng=rng, mask_generator=mask_gen, ext_params=ext_params, **kwargs)
     return _example_to_feature
 
+  def get_collate_fn(self):
+    def collate_fn(batch):
+      return collate_examples(batch, self.tokenizer, self.args)
+    return collate_fn
+
   def get_eval_fn(self):
     def eval_fn(args, model, device, eval_data, prefix=None, tag=None, steps=None):
       # Run prediction for full data
@@ -247,7 +275,12 @@ class MLMTask(Task):
         eval_sampler = SequentialSampler(len(eval_item.data))
         batch_sampler = BatchSampler(eval_sampler, args.eval_batch_size)
         batch_sampler = DistributedBatchSampler(batch_sampler, rank=args.rank, world_size=args.world_size)
-        eval_dataloader = DataLoader(eval_item.data, batch_sampler=batch_sampler, num_workers=args.workers)
+        eval_dataloader = DataLoader(
+          eval_item.data,
+          batch_sampler=batch_sampler,
+          num_workers=args.workers,
+          collate_fn=self.get_collate_fn(),
+        )
         model.eval()
         eval_loss, eval_accuracy = 0, 0
         nb_eval_steps, nb_eval_examples = 0, 0

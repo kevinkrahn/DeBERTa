@@ -50,8 +50,7 @@ def create_model(args, num_labels, model_class_fn, tokenizer):
   logger.info(f'Total parameters: {sum([p.numel() for p in model.parameters()])}')
   return model
 
-def train_model(args, model, device, train_data, eval_data, run_eval_fn, train_fn=None, loss_fn=None):
-  total_examples = len(train_data)
+def train_model(args, model, device, train_data, eval_data, run_eval_fn, collate_fn, train_fn=None, loss_fn=None):
   num_train_steps = int(len(train_data)*args.num_train_epochs / args.train_batch_size)
   logger.info("  Training batch size = %d", args.train_batch_size)
   logger.info("  Num steps = %d", num_train_steps)
@@ -94,18 +93,19 @@ def train_model(args, model, device, train_data, eval_data, run_eval_fn, train_f
       return loss.mean(), data['input_ids'].size(0)
     return adv_loss_fn
   
-  def _train_fn(args, model, device, data_fn, eval_fn, loss_fn):
+  def _train_fn(args, model, device, data_fn, eval_fn, loss_fn, collate_fn):
     
     if loss_fn is None:
       loss_fn = get_adv_loss_fn() if args.vat_lambda>0 else _loss_fn
   
-    trainer = DistributedTrainer(args, args.output_dir, model, device, data_fn, loss_fn = loss_fn, eval_fn = eval_fn, dump_interval = args.dump_interval)
+    trainer = DistributedTrainer(args, args.output_dir, model, device, data_fn, loss_fn=loss_fn,
+                                 eval_fn=eval_fn, dump_interval=args.dump_interval, collate_fn=collate_fn)
     trainer.train()
 
   if train_fn is None:
     train_fn = _train_fn
 
-  train_fn(args, model, device, data_fn = data_fn, eval_fn = eval_fn, loss_fn = loss_fn)
+  train_fn(args, model, device, data_fn=data_fn, eval_fn=eval_fn, loss_fn=loss_fn, collate_fn=collate_fn)
 
 def calc_metrics(predicts, labels, eval_loss, eval_item, eval_results, args, name, prefix, steps, tag):
   tb_metrics = OrderedDict()
@@ -307,6 +307,7 @@ def main(args):
   model.to(device)
   run_eval_fn = task.get_eval_fn()
   loss_fn = task.get_loss_fn(args)
+  collate_fn = task.get_collate_fn()
   if run_eval_fn is None:
     run_eval_fn = run_eval
   
@@ -315,7 +316,7 @@ def main(args):
 
   if args.do_train:
     train_fn = task.get_train_fn(args, model)
-    train_model(args, model, device, train_data, eval_data, run_eval_fn, loss_fn=loss_fn, train_fn = train_fn)
+    train_model(args, model, device, train_data, eval_data, run_eval_fn, loss_fn=loss_fn, train_fn=train_fn, collate_fn=collate_fn)
 
   if args.do_predict:
     run_predict(args, model, device, test_data, prefix=args.tag)

@@ -113,6 +113,9 @@ class Task():
         rng = rng, mask_generator = mask_gen, ext_params = ext_params, label_type=label_type, **kwargs)
     return _example_to_feature
 
+  def get_collate_fn(self):
+    raise NotImplementedError()
+
   def get_model_class_fn(self):
     return SequenceClassificationModel.load_model
   

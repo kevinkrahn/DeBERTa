@@ -114,10 +114,6 @@ class NNModule(nn.Module):
     if model_config is not None:
       config = copy.copy(model_config)
 
-    if tokenizer and config.vocab_size != len(tokenizer.vocab):
-      logger.info('Setting vocab size to {}'.format(len(tokenizer.vocab)))
-      config.vocab_size = len(tokenizer.vocab)
-
     # Instantiate model.
     model = cls(config, tokenizer=tokenizer, *inputs, **kwargs)
     if not model_state:

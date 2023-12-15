@@ -73,7 +73,7 @@ class TrainerState:
     self._last_report_step = self.steps
 
 class DistributedTrainer:
-  def __init__(self, args, output_dir, model, device, data_fn, loss_fn=None, optimizer_fn=None, eval_fn=None, init_fn=None, update_fn=None, dump_interval = 10000, name=None, **kwargs):
+  def __init__(self, args, output_dir, model, device, data_fn, collate_fn, loss_fn=None, optimizer_fn=None, eval_fn=None, init_fn=None, update_fn=None, dump_interval=10000, name=None, **kwargs):
     """
     data_fn return tuples (training_dataset, training_steps, train_sampler, batch_scheduler), training_dataset is required
     loss_fn return the loss of current mini-batch and the size of the batch
@@ -88,6 +88,7 @@ class DistributedTrainer:
     if hasattr(args, 'accumulative_update'):
       self.accumulative_update = args.accumulative_update
     
+    self.collate_fn = collate_fn
     train_data, training_steps, train_sampler = data_fn(self)
     self.train_data = train_data
     self.train_sampler = train_sampler if train_sampler is not None else RandomSampler(len(train_data))
@@ -139,7 +140,14 @@ class DistributedTrainer:
       batch_sampler = DistributedBatchSampler(batch_sampler, rank = rank, world_size = world_size)
       batch_sampler.next = self.trainer_state.next_batch
       num_workers = getattr(self.args, 'workers', 2)
-      train_dataloader = DataLoader(self.train_data, batch_sampler=batch_sampler, num_workers=num_workers, worker_init_fn=self.init_fn, pin_memory=False)
+      train_dataloader = DataLoader(
+          self.train_data,
+          batch_sampler=batch_sampler,
+          num_workers=num_workers,
+          worker_init_fn=self.init_fn,
+          collate_fn=self.collate_fn,
+          pin_memory=False,
+      )
       logger.info(f'Epoch {n_epoch}')
       torch.cuda.empty_cache()
       for step, batch in enumerate(AsyncDataLoader(train_dataloader, self.args.dataloader_buffer_size)):

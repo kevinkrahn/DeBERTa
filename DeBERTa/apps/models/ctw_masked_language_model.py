@@ -11,8 +11,12 @@ __all__ = ['CharToWord_MaskedLanguageModel']
 class CharToWord_MaskedLanguageModel(NNModule):
   """ Masked language model with CharToWord_DeBERTa
   """
-  def __init__(self, config, *wargs, **kwargs):
+  def __init__(self, config, tokenizer=None, *wargs, **kwargs):
     super().__init__(config)
+
+    if tokenizer and config.vocab_size != len(tokenizer.vocab):
+      config.vocab_size = len(tokenizer.vocab)
+
     self.ctw_deberta = CharToWord_DeBERTa(config)
     self.cls = CharToWord_LMPredictionHead(self.ctw_deberta.config, self.ctw_deberta.char_embeddings)
     self.apply(self.init_weights)

@@ -69,8 +69,12 @@ class EnhancedMaskDecoder(torch.nn.Module):
 class MaskedLanguageModel(NNModule):
   """ Masked language model with DeBERTa
   """
-  def __init__(self, config, *wargs, **kwargs):
+  def __init__(self, config, tokenizer=None, *wargs, **kwargs):
     super().__init__(config)
+
+    if tokenizer and config.vocab_size != len(tokenizer.vocab):
+      config.vocab_size = len(tokenizer.vocab)
+
     self.deberta = DeBERTa(config)
     # renamed lm_predictions -> cls so the LM head weights can be loaded with HuggingFace transformers
     self.cls = EnhancedMaskDecoder(self.deberta.config, self.deberta.embeddings.word_embeddings)
