@@ -1,4 +1,4 @@
-nltk
+#nltk
 #spacy
 numpy
 pytest
@@ -11,7 +11,7 @@ seqeval
 psutil
 sentencepiece
 #GitPython
-torch
+#torch
 #torchvision
 six
 requests

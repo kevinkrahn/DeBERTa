@@ -53,9 +53,10 @@ python -m DeBERTa.apps.run \
 	--token_format "$token_format" \
 	--num_train_epochs 10 \
 	--learning_rate 1e-4 \
-	--train_batch_size 6 \
+	--train_batch_size 8 \
 	--dataloader_buffer_size 30 \
 	--workers 1 \
 	--fp16 true \
 	--dump 1000 \
 	--log_steps 250 \
+	--warmup_proportion 0.05

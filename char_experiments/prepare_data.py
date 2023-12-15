@@ -19,6 +19,7 @@ def encode(input_file, output_file, max_seq_length, max_word_length, token_forma
       # TODO: Use better tokenization if the input is not segmented (e.g. handle punctuation)
       lines = [ l.split() for l in f.readlines() if l.strip() != '' ]
 
+    split_words = 0
     if token_format == 'char_to_word':
       all_lines = []
       for line in lines:
@@ -29,6 +30,7 @@ def encode(input_file, output_file, max_seq_length, max_word_length, token_forma
           for i in range(0, len(tokens), max_word_length-1):
             words.append(['[WORD_CLS]'] + tokens[i: i+max_word_length-1])
         all_lines.append(words)
+        split_words += len(words) - len(line)
     elif token_format == 'char':
       all_lines = [[['[WORD_CLS]', *tokenizer.tokenize(word)] for word in line] for line in lines]
     elif token_format == 'subword':
@@ -60,7 +62,12 @@ def encode(input_file, output_file, max_seq_length, max_word_length, token_forma
           f.write(' '.join(token for token in tokens) + '\n')
           total_lines += 1
 
+  split_lines = total_lines - len(lines)
+
   print(f'Saved {total_lines} lines to {output_file}')
+  print(f'Split {split_lines} lines into multiple lines of max_seq_length={max_seq_length}')
+  if split_words > 0:
+    print(f'Split {split_words} words into multiple words of max_word_length={max_word_length}')
 
 
 if __name__ == '__main__':
