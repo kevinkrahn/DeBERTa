@@ -11,6 +11,7 @@ def main(args):
 
 
 def encode(input_file, output_file, max_seq_length, max_word_length, token_format, tokenizer):
+  print(f'Loading {input_file}...')
   with open(input_file, encoding='utf-8') as f:
     # Input must be segmented into words because each word is prefixed with [WORD_CLS]
     if input_file.endswith('.conllu'):
@@ -76,7 +77,7 @@ if __name__ == '__main__':
   parser.add_argument('--valid_file', required=True, help='The validation data path')
   parser.add_argument('--test_file', required=False, help='The test data path')
   parser.add_argument('--vocab_path', required=True, default=None, help='The path to the vocab file')
-  parser.add_argument('--vocab_type', required=True, default=None, help='The tokenizer type')
+  parser.add_argument('--vocab_type', default='spm', help='The tokenizer type')
   parser.add_argument('--output_dir', required=True, default=None, help='The output directory')
   parser.add_argument('--max_seq_length', type=int, default=512, help='Maxium sequence length of inputs')
   parser.add_argument('--token_format', required=True, type=str, help='How to store the tokens in the output files. Options: char, word, char_to_word')

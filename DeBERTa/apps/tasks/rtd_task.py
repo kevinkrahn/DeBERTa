@@ -115,7 +115,7 @@ class RTDTask(Task):
         gen_args = copy.deepcopy(args)
         gen_args.checkpoint_dir = os.path.join(gen_args.output_dir, 'generator')
         os.makedirs(gen_args.checkpoint_dir, exist_ok=True)
-        with open(os.path.join(gen_args.checkpoint_dir, 'model_config.json'), 'w') as fs:
+        with open(os.path.join(gen_args.checkpoint_dir, 'config.json'), 'w') as fs:
           fs.write(model.config.generator.to_json_string() + '\n')
         shutil.copy(args.vocab_path, gen_args.checkpoint_dir)
         loss_fn = self.get_decoupled_loss_fn(args, model, data_fn, device, args.num_training_steps)
@@ -233,7 +233,7 @@ class RTDTask(Task):
     disc_args = copy.deepcopy(args)
     disc_args.checkpoint_dir = os.path.join(disc_args.output_dir, 'discriminator')
     os.makedirs(disc_args.checkpoint_dir, exist_ok=True)
-    with open(os.path.join(disc_args.checkpoint_dir, 'model_config.json'), 'w') as fs:
+    with open(os.path.join(disc_args.checkpoint_dir, 'config.json'), 'w') as fs:
       fs.write(model.config.discriminator.to_json_string() + '\n')
     shutil.copy(args.vocab_path, disc_args.checkpoint_dir)
     if disc_args.discriminator_learning_rate > 0:

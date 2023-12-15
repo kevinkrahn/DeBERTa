@@ -12,11 +12,10 @@ from __future__ import print_function
 
 from .tokenizers import *
 from .pooling import *
-from .nnmodule import NNModule
+from .nnmodule import *
 from .deberta import *
 from .ctw_deberta import *
 from .disentangled_attention import *
 from .ops import *
 from .bert import *
 from .config import *
-from .cache_utils import *

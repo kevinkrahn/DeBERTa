@@ -66,8 +66,9 @@ class TrainerState:
     if self.name is not None:
       tag = f'[{self.name}]'
     else:
-      tag = None
-    logger.info('{}[{:0.1f}%][{:0.2f}h] Steps={}, loss={}, examples={}, loss_scale={:0.1f}, {:0.1f}s'.format(tag, 100*self.steps/self.num_training_steps, \
+      tag = ''
+    self.pbar.clear()
+    logger.info('{}[{:0.1f}%][{:0.2f}h] Steps={}, loss={:0.6f}, examples={}, loss_scale={:0.1f}, {:0.1f}s'.format(tag, 100*self.steps/self.num_training_steps, \
       (self.num_training_steps - self.steps)*(start-end)/((self.steps-self._last_report_step)*3600), self.steps, self.loss/self.steps, self.examples, self.loss_scale, end-start))
     self._last_report_time = end
     self._last_report_step = self.steps
@@ -134,7 +135,7 @@ class DistributedTrainer:
 
     rank = self.args.rank
     world_size = self.args.world_size
-    pbar = tqdm.tqdm(total=self.training_steps, desc='Training', ncols=100)
+    self.trainer_state.pbar = tqdm.tqdm(total=self.training_steps, desc='Training', ncols=100, smoothing=0.05, delay=0.2)
     for n_epoch in range(self.trainer_state.epochs, self.training_epochs):
       batch_sampler = BatchSampler(self.train_sampler, self.args.train_batch_size)
       batch_sampler = DistributedBatchSampler(batch_sampler, rank = rank, world_size = world_size)
@@ -148,7 +149,7 @@ class DistributedTrainer:
           collate_fn=self.collate_fn,
           pin_memory=False,
       )
-      logger.info(f'Epoch {n_epoch}')
+      logger.info(f'Epoch {n_epoch+1}')
       torch.cuda.empty_cache()
       for step, batch in enumerate(AsyncDataLoader(train_dataloader, self.args.dataloader_buffer_size)):
         if self.trainer_state.steps >= self.training_steps:
@@ -156,13 +157,15 @@ class DistributedTrainer:
         bs_scale = 1
         batch = batch_to(batch, self.device)
         self._train_step(batch, bs_scale)
-        pbar.update(1)
+        self.trainer_state.pbar.update(1)
+        #self.trainer_state.pbar.set_postfix({'loss': f'{self.trainer_state.loss/self.trainer_state.steps:0.6f}'})
+
+      self.trainer_state.pbar.close()
       # Save model
       self.trainer_state.epochs += 1
       self.trainer_state.next_batch = 0
       self.trainer_state.report_state()
       self._eval_model()
-    pbar.close()
 
   def save_model(self, args, checkpoint_dir, chk_postfix, model, optimizer):
     save_path= os.path.join(checkpoint_dir, f'pytorch.model-{chk_postfix}.bin')
@@ -244,7 +247,7 @@ class DistributedTrainer:
     if self.post_loss_fn is not None:
       self.post_loss_fn(forward_outputs)
 
-    if self.trainer_state.steps%self.args.log_steps == 0:
+    if self.args.log_steps > 0 and self.trainer_state.steps%self.args.log_steps == 0:
       self.trainer_state.report_state()
     if self.trainer_state.steps%self.dump_interval == 0:
       self._eval_model()

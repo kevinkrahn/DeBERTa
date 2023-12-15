@@ -13,7 +13,6 @@ from collections.abc import Sequence
 import copy
 import math
 import string
-from nltk.tokenize import sent_tokenize
 import pickle
 from scipy.special import softmax
 from multiprocessing import Pool, Queue, Process

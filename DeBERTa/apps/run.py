@@ -11,26 +11,21 @@
 
 import os
 os.environ["OMP_NUM_THREADS"] = "1"
-from ..deberta import tokenizers,load_vocab
+from ..deberta import tokenizers
 from collections import OrderedDict
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 import argparse
 import random
-import time
 
 import numpy as np
-import math
 import torch
-import json
 import shutil
 from torch.utils.data import DataLoader
 from ..utils import *
 from ..utils import xtqdm as tqdm
 from ..sift import AdversarialLearner,hook_sift_layer
 from .tasks import load_tasks,get_task
-from ._utils import merge_distributed, join_chunks
-
-import pdb
+from ._utils import merge_distributed
 
 from ..training import DistributedTrainer, initialize_distributed, batch_to, kill_children
 from ..data import DistributedBatchSampler, SequentialSampler, BatchSampler, AsyncDataLoader
@@ -279,9 +274,9 @@ def main(args):
   np.random.seed(args.seed)
   torch.manual_seed(args.seed)
 
-  vocab_path, vocab_type = load_vocab(vocab_path = args.vocab_path, vocab_type = args.vocab_type, pretrained_id = args.init_model)
+  vocab_path = args.vocab_path
   extra_tokens = [] if args.token_format == 'subword' else ['[WORD_CLS]']
-  tokenizer = tokenizers[vocab_type](vocab_path, special_tokens=extra_tokens)
+  tokenizer = tokenizers[args.vocab_type](vocab_path, special_tokens=extra_tokens)
   task = get_task(args.task_name)(tokenizer = tokenizer, args=args, max_seq_len = args.max_seq_length, data_dir = args.data_dir)
   label_list = task.get_labels()
 
@@ -297,7 +292,7 @@ def main(args):
   model_class_fn = task.get_model_class_fn()
   model = create_model(args, len(label_list), model_class_fn, tokenizer)
   if args.do_train:
-    with open(os.path.join(args.output_dir, 'model_config.json'), 'w', encoding='utf-8') as fs:
+    with open(os.path.join(args.output_dir, 'config.json'), 'w', encoding='utf-8') as fs:
       fs.write(model.config.to_json_string() + '\n')
     shutil.copy(vocab_path, args.output_dir)
   logger.info("Model config {}".format(model.config))
@@ -413,7 +408,7 @@ def build_argument_parser():
             help="The number of batches for the AsyncDataLoader to preload.")
 
   parser.add_argument("--log_steps",
-            default=100,
+            default=0,
             type=int,
             help="The steps interval to log training state.")
 
@@ -446,7 +441,7 @@ def build_argument_parser():
             help="The path of pre-trained RoBERTa model")
 
   parser.add_argument('--vocab_type',
-            default='gpt2',
+            default='spm',
             type=str,
             help=f"Vocabulary type: [{', '.join(tokenizers.keys())}]")
 

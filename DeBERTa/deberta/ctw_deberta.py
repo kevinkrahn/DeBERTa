@@ -9,7 +9,7 @@ import torch
 
 from .ops import *
 from .bert import *
-from .cache_utils import load_model_state
+from .nnmodule import load_model_state
 
 __all__ = ['CharToWord_DeBERTa', 'CharToWord_LMPredictionHead', 'CharToWord_LMMaskPredictionHead']
 

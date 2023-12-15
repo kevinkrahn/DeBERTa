@@ -1,16 +1,13 @@
-import pdb
 import os
 import torch
 import copy
 from torch import nn
 from .config import ModelConfig
-from ..utils import xtqdm as tqdm
-from .cache_utils import load_model_state
 
 from ..utils import get_logger
 logger = get_logger()
 
-__all__ = ['NNModule']
+__all__ = ['NNModule', 'load_model_state']
 
 class NNModule(nn.Module):
   """ An abstract class to handle weights initialization and \
@@ -56,7 +53,7 @@ class NNModule(nn.Module):
     raise NotImplementedError
 
   @classmethod
-  def load_model(cls, model_path, model_config=None, tag=None, no_cache=False, cache_dir=None, tokenizer=None, *inputs, **kwargs):
+  def load_model(cls, model_path, model_config=None, tokenizer=None, *inputs, **kwargs):
     """ Instantiate a sub-class of NNModule from a pre-trained model file.
       
     Args:
@@ -65,23 +62,15 @@ class NNModule(nn.Module):
         
         - The path of pre-trained model
 
-        - The pre-trained DeBERTa model name in `DeBERTa GitHub releases <https://github.com/microsoft/DeBERTa/releases>`_, i.e. [**base, base_mnli, large, large_mnli**].
-
         If `model_path` is `None` or `-`, then the method will create a new sub-class without initialing from pre-trained models.
 
       model_config (:obj:`str`): The path of model config file. If it's `None`, then the method will try to find the the config in order:
         
         1. ['config'] in the model state dictionary.
 
-        2. `model_config.json` aside the `model_path`.
+        2. `config.json` aside the `model_path`.
         
         If it failed to find a config the method will fail.
-
-      tag (:obj:`str`, optional): The release tag of DeBERTa, default: `None`.
-
-      no_cache (:obj:`bool`, optional): Disable local cache of downloaded models, default: `False`.
-
-      cache_dir (:obj:`str`, optional): The cache directory used to save the downloaded models, default: `None`. If it's `None`, then the models will be saved at `$HOME/.~DeBERTa`
 
     Return:
       
@@ -98,7 +87,7 @@ class NNModule(nn.Module):
     if (model_path is not None) and (model_path.strip() == '-' or model_path.strip()==''):
       model_path = None
     try:
-      model_state, model_config = load_model_state(model_path, tag=tag, no_cache=no_cache, cache_dir=cache_dir)
+      model_state, model_config = load_model_state(model_path)
     except Exception as exp:
       raise Exception(f'Failed to get model {model_path}. Exception: {exp}')
     
@@ -135,3 +124,18 @@ class NNModule(nn.Module):
     load(model)
     logger.warning(f'Missing keys: {missing_keys}, unexpected_keys: {unexpected_keys}, error_msgs: {error_msgs}')
     return model
+
+
+def load_model_state(model_path):
+  if not model_path:
+    return None, None
+  config_path = os.path.join(os.path.dirname(model_path), 'config.json')
+  model_state = torch.load(model_path, map_location='cpu')
+  logger.info("Loaded pretrained model file {}".format(model_path))
+  if 'config' in model_state:
+    model_config = ModelConfig.from_dict(model_state['config'])
+  elif os.path.exists(config_path):
+    model_config = ModelConfig.from_json_file(config_path)
+  else:
+    model_config = None
+  return model_state, model_config
