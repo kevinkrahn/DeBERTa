@@ -160,12 +160,13 @@ class DistributedTrainer:
         self.trainer_state.pbar.update(1)
         #self.trainer_state.pbar.set_postfix({'loss': f'{self.trainer_state.loss/self.trainer_state.steps:0.6f}'})
 
-      self.trainer_state.pbar.close()
       # Save model
       self.trainer_state.epochs += 1
       self.trainer_state.next_batch = 0
       self.trainer_state.report_state()
       self._eval_model()
+
+    self.trainer_state.pbar.close()
 
   def save_model(self, args, checkpoint_dir, chk_postfix, model, optimizer):
     save_path= os.path.join(checkpoint_dir, f'pytorch.model-{chk_postfix}.bin')
