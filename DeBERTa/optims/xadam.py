@@ -39,7 +39,8 @@ def adamw(data,
   grad = grad.float()
   if grad_scale != 1:
     grad *= 1/grad_scale
-  next_m.mul_(beta1).add_(beta1_, grad)
+  #next_m.mul_(beta1).add_(beta1_, grad)
+  next_m.mul_(beta1).add_(grad, alpha=beta1_)
   # admax
   admax = eps_mode>>4
   eps_mode = eps_mode&0xF
@@ -47,7 +48,8 @@ def adamw(data,
     torch.max(next_v.mul_(beta2), grad.abs().to(next_v), out=next_v)
     update = next_m/(next_v+eps)
   else:
-    next_v.mul_(beta2).addcmul_(beta2_, grad, grad)
+    #next_v.mul_(beta2).addcmul_(beta2_, grad, grad)
+    next_v.mul_(beta2).addcmul_(grad, grad, value=beta2_)
     if eps_mode == 0:
       update = (next_m)*(next_v+eps).rsqrt()
     elif eps_mode == 1:
@@ -55,9 +57,9 @@ def adamw(data,
     else: #=2
       update = next_m.clone()
   if weight_decay>0:
-    update.add_(weight_decay, data)
+    update.add_(data, alpha=weight_decay)
 
-  data.add_(-lr, update)
+  data.add_(update, alpha=-lr)
   if (out_data is not None) and len(out_data)>0:
     out_data.copy_(data)
 
