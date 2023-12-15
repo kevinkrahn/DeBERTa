@@ -25,7 +25,6 @@ validation_file=$7
 
 max_seq_length=256
 max_word_length=16
-vocab_type=spm
 data_dir="$output_dir/data"
 
 mkdir -p "$data_dir"
@@ -34,7 +33,6 @@ python "$SCRIPT_DIR/prepare_data.py" \
 	--train_file "$train_file" \
 	--valid_file "$validation_file" \
 	--vocab_path "$vocab_path" \
-	--vocab_type $vocab_type \
 	--output_dir "$data_dir" \
 	--max_seq_length $max_seq_length \
 	--max_word_length $max_word_length \
@@ -48,15 +46,14 @@ python -m DeBERTa.apps.run \
 	--max_word_length $max_word_length \
 	--data_dir "$data_dir" \
 	--vocab_path "$vocab_path" \
-	--vocab_type $vocab_type \
 	--output_dir "$output_dir" \
 	--token_format "$token_format" \
 	--num_train_epochs 10 \
-	--learning_rate 1e-4 \
-	--train_batch_size 8 \
+	--learning_rate 1e-5 \
+	--train_batch_size 10 \
 	--dataloader_buffer_size 30 \
 	--workers 1 \
 	--fp16 true \
-	--dump 1000 \
 	--log_steps 250 \
-	--warmup_proportion 0.05
+	--dump 1000 \
+	--warmup_proportion 0.1

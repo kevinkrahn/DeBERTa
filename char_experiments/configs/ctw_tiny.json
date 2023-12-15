@@ -21,7 +21,7 @@
 		"position_biased_input": false,
 		"num_attention_heads": 8,
 		"attention_head_size": 32,
-		"num_hidden_layers": 2,
+		"num_hidden_layers": 4,
 		"type_vocab_size": 0,
 		"conv_kernel_size": 0,
 		"conv_act": "gelu"

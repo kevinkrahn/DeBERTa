@@ -11,7 +11,7 @@ from .ops import *
 from .bert import *
 from .nnmodule import load_model_state
 
-__all__ = ['CharToWord_DeBERTa', 'CharToWord_LMPredictionHead', 'CharToWord_LMMaskPredictionHead']
+__all__ = ['CharToWord_DeBERTa', 'CharToWord_LMPredictionHead', 'CharToWord_ReplacedTokenDetectionHead']
 
 class CharToWord_DeBERTa(torch.nn.Module):
   def __init__(self, config=None, pre_trained=None):
@@ -30,25 +30,19 @@ class CharToWord_DeBERTa(torch.nn.Module):
 
     self.config = config
     self.pre_trained = pre_trained
-    # TODO: Try sharing relative embeddings between intra and inter word encoders
+    # TODO: Share relative embeddings between intra and inter word encoders to save parameters
     self.intra_word_encoder = BertEncoder(config.intra_word_encoder)
     self.inter_word_encoder = BertEncoder(config.inter_word_encoder)
     self.apply_state(state)
 
   def forward(self, input_ids, char_input_mask, word_input_mask, char_position_ids=None, word_position_ids=None, output_all_encoded_layers=True, return_att=False):
     input_embeds = self.char_embeddings(input_ids)
-
     input_embeds = self.char_embedding_layer_norm(input_embeds)
-
-    # TODO: Determine why masking the embeddings causes Infs in the loss
-    #mask = char_input_mask.unsqueeze(-1).to(input_embeds)
-    #input_embeds = input_embeds * mask
-
+    input_embeds = input_embeds * char_input_mask.unsqueeze(-1).to(input_embeds) # MaskedLayerNorm
     input_embeds = self.char_embedding_dropout(input_embeds)
 
-    batch_size, num_word, num_char, hidden_size = input_embeds.shape
-
     # reshape to attend to intra-word tokens rather than full sequence
+    batch_size, num_word, num_char, hidden_size = input_embeds.shape
     input_embeds = input_embeds.reshape(batch_size * num_word, num_char, hidden_size)
     intra_word_mask = char_input_mask.reshape(batch_size * num_word, num_char)
     intra_word_output = self.intra_word_encoder(input_embeds, intra_word_mask, output_all_encoded_layers=False, return_att=False)
@@ -106,13 +100,8 @@ class CharToWord_LMPredictionHead(torch.nn.Module):
           self.bias = torch.nn.Parameter(torch.zeros(config.vocab_size))
           self.decoder.bias = self.bias
           self.decoder.weight = input_embeddings.weight
-          #self.decoder.bias.data = torch.nn.functional.pad(self.decoder.bias.data, (0, self.decoder.weight.shape[0] - self.decoder.bias.shape[0]), 'constant', 0)
         else:
           self.decoder = torch.nn.Linear(config.intra_word_encoder.hidden_size, config.vocab_size)
-
-        #self.transform_act_fn = ACT2FN[config.intra_word_encoder.hidden_act] if isinstance(config.intra_word_encoder.hidden_act, str) else config.intra_word_encoder.hidden_act
-        #self.bias = torch.nn.Parameter(torch.zeros(config.vocab_size))
-        #self.LayerNorm = LayerNorm(config.intra_word_encoder.hidden_size, config.intra_word_encoder.layer_norm_eps, elementwise_affine=True)
 
         self.residual_word_embedding = getattr(config, 'residual_word_embedding', False)
 
@@ -130,6 +119,7 @@ class CharToWord_LMPredictionHead(torch.nn.Module):
 
         if self.residual_word_embedding:
           # residual connection between initial word embeddings and contextual word embeddings as mentioned in the paper (section A.3)
+          # TODO: Skip residual connection for CLS and SEP tokens
           initial_word_embeds = deberta_output['initial_word_embeds']
           word_embeds += initial_word_embeds.unsqueeze(1)
 
@@ -142,19 +132,15 @@ class CharToWord_LMPredictionHead(torch.nn.Module):
           hidden_states = hidden_states.view(-1, hidden_states.size(-1))
           hidden_states = hidden_states.index_select(0, label_index)
 
-        # TODO: Experiment with tied weights (like in regular BERT)
         char_logits = self.decoder(hidden_states)
-        #char_logits = self.transform_act_fn(char_logits)
 
         if label_index is None:
           char_logits = char_logits.reshape(batch_size, num_word * num_char, -1)
 
-        # TODO: LayerNorm?
-
         return char_logits
 
 
-class CharToWord_LMMaskPredictionHead(torch.nn.Module):
+class CharToWord_ReplacedTokenDetectionHead(torch.nn.Module):
     """ Prediction head used for replaced token detection. """
     def __init__(self, config):
         super().__init__()
@@ -177,6 +163,7 @@ class CharToWord_LMMaskPredictionHead(torch.nn.Module):
 
         if self.residual_word_embedding:
           # residual connection between initial word embeddings and contextual word embeddings as mentioned in the paper (section A.3)
+          # TODO: Skip residual connection for CLS and SEP tokens
           initial_word_embeds = deberta_output['initial_word_embeds']
           word_embeds += initial_word_embeds.unsqueeze(1)
 
@@ -184,11 +171,6 @@ class CharToWord_LMMaskPredictionHead(torch.nn.Module):
         char_embeds = torch.cat([word_embeds, initial_embeds[:,1:,:]], dim=1)
         intra_word_output = self.intra_word_encoder(char_embeds, intra_word_mask, output_all_encoded_layers=False, return_att=False, relative_embeddings=rel_embeddings)
         hidden_states = intra_word_output['hidden_states'][-1]
-
-        #ctx_states = hidden_states[:,0,:]
-        #seq_states = self.layer_norm(ctx_states.unsqueeze(-2) + hidden_states)
-        #seq_states = self.dense(seq_states)
-        #seq_states = self.transform_act_fn(seq_states)
 
         logits = self.classifier(hidden_states)
         logits = logits.reshape(batch_size, num_word * num_char, -1)

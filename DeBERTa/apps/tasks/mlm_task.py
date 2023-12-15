@@ -157,7 +157,8 @@ class NGramMaskGenerator:
 
     unigrams = self.get_unigrams(tokens)
 
-    num_to_predict = min(self.max_preds_per_seq, max(1, int(round(len(tokens) * self.mask_lm_prob))))
+    num_regular_tokens = sum(len(x) for x in unigrams)
+    num_to_predict = min(self.max_preds_per_seq, max(1, int(math.ceil(num_regular_tokens * self.mask_lm_prob))))
     offset = 0
     mask_grams = np.array([False]*len(unigrams))
     while offset < len(unigrams):

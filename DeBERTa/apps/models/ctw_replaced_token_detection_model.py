@@ -1,7 +1,6 @@
 import torch
 import random
 from ...deberta import *
-from .ctw_masked_language_model import CharToWord_MaskedLanguageModel
 
 __all__ = ['CharToWord_ReplacedTokenDetectionModel', 'CharToWord_RTDCombinedModel']
 
@@ -11,7 +10,7 @@ class CharToWord_ReplacedTokenDetectionModel(NNModule):
   def __init__(self, config, *wargs, **kwargs):
     super().__init__(config)
     self.deberta = CharToWord_DeBERTa(config)
-    self.mask_predictions = CharToWord_LMMaskPredictionHead(self.deberta.config)
+    self.mask_predictions = CharToWord_ReplacedTokenDetectionHead(self.deberta.config)
     self.apply(self.init_weights)
 
   def forward(self, input_ids, char_input_mask, word_input_mask, char_position_ids=None, word_position_ids=None, labels=None):

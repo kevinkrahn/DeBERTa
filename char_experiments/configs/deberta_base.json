@@ -21,5 +21,6 @@
 	"type_vocab_size": 0,
 	"conv_kernel_size": 0,
 	"conv_act": "gelu",
-	"tie_word_embeddings": true
+	"tie_word_embeddings": false,
+	"vocab_size": -1
 }
