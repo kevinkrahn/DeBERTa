@@ -2,15 +2,7 @@ from DeBERTa.deberta.tokenizers import tokenizers
 import argparse
 import conllu
 
-def main(args):
-  tokenizer = tokenizers[args.vocab_type](args.vocab_path)
-  encode(args.train_file, args.output_dir + "/train.txt", args.max_seq_length, args.max_word_length, args.token_format, tokenizer)
-  encode(args.valid_file, args.output_dir + "/valid.txt", args.max_seq_length, args.max_word_length, args.token_format, tokenizer)
-  if args.test_file:
-    encode(args.test_file, args.output_dir + "/test.txt", args.max_seq_length, args.max_word_length, args.token_format, tokenizer)
-
-
-def encode(input_file, output_file, max_seq_length, max_word_length, token_format, tokenizer):
+def encode(input_file, output_file, max_seq_length, max_word_length, token_format, tokenizer, split_long_words=True):
   print(f'Loading {input_file}...')
   with open(input_file, encoding='utf-8') as f:
     # Input must be segmented into words because each word is prefixed with [WORD_CLS]
@@ -26,10 +18,12 @@ def encode(input_file, output_file, max_seq_length, max_word_length, token_forma
       for line in lines:
         words = []
         for word in line:
-          # TODO: Split or truncate? Currently, if a word is longer than max_word_length it is split into multiple words
           tokens = tokenizer.tokenize(word)
-          for i in range(0, len(tokens), max_word_length-1):
-            words.append(['[WORD_CLS]'] + tokens[i: i+max_word_length-1])
+          if split_long_words:
+            for i in range(0, len(tokens), max_word_length-1):
+              words.append(['[WORD_CLS]'] + tokens[i: i+max_word_length-1])
+          else:
+              words.append(['[WORD_CLS]'] + tokens[0: max_word_length-1])
         all_lines.append(words)
         split_words += len(words) - len(line)
     elif token_format == 'char':
@@ -84,4 +78,8 @@ if __name__ == '__main__':
   parser.add_argument('--max_word_length', type=int, default=20, help='Maximum number of chars per word (only applies if --char_to_word is set))')
   args = parser.parse_args()
 
-  main(args)
+  tokenizer = tokenizers[args.vocab_type](args.vocab_path)
+  encode(args.train_file, args.output_dir + "/train.txt", args.max_seq_length, args.max_word_length, args.token_format, tokenizer)
+  encode(args.valid_file, args.output_dir + "/valid.txt", args.max_seq_length, args.max_word_length, args.token_format, tokenizer)
+  if args.test_file:
+    encode(args.test_file, args.output_dir + "/test.txt", args.max_seq_length, args.max_word_length, args.token_format, tokenizer)

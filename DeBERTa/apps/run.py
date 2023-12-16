@@ -267,7 +267,7 @@ def run_predict(args, model, device, eval_data, prefix=None):
           np.savetxt(output_test_file, predicts.detach().cpu().numpy(), delimiter='\t')
           predict_fn(predicts.detach().cpu().numpy(), args.output_dir, name, prefix)
 
-def main(args):
+def run(args):
   if not args.do_train and not args.do_eval and not args.do_predict:
     raise ValueError("At least one of `do_train` or `do_eval` or `do_predict` must be True.")
   random.seed(args.seed)
@@ -482,16 +482,14 @@ def build_argument_parser():
 
   return parser
 
-if __name__ == "__main__":
-  parser = build_argument_parser()
-  parser.parse_known_args()
 
-  args = parser.parse_args()
+def train(args):
+  global logger
   os.makedirs(args.output_dir, exist_ok=True)
   logger = set_logger(args.task_name, os.path.join(args.output_dir, 'training_{}.log'.format(args.task_name)))
   logger.info(args)
   try:
-    main(args)
+    run(args)
   except Exception as ex:
     try:
       logger.exception(f'Uncatched exception happened during execution.')
@@ -501,3 +499,10 @@ if __name__ == "__main__":
       pass
     kill_children()
     os._exit(-1)
+
+
+if __name__ == "__main__":
+  parser = build_argument_parser()
+  parser.parse_known_args()
+  args = parser.parse_args()
+  train(args)
